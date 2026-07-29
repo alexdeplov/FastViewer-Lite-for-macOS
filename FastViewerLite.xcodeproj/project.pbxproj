@@ -1,0 +1,711 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A10000000000000000000001 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000001 /* main.swift */; };
+		A10000000000000000000002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000002 /* AppDelegate.swift */; };
+		A10000000000000000000003 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000003 /* ViewController.swift */; };
+		A10000000000000000000004 /* DraggableImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000004 /* DraggableImageView.swift */; };
+		A10000000000000000000005 /* DraggableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000005 /* DraggableView.swift */; };
+		A10000000000000000000006 /* NonInteractiveImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000006 /* NonInteractiveImageView.swift */; };
+		A10000000000000000000007 /* SettingsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000007 /* SettingsViewController.swift */; };
+		A10000000000000000000008 /* SettingsManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000008 /* SettingsManager.swift */; };
+		A10000000000000000000009 /* AboutViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000009 /* AboutViewController.swift */; };
+		A1000000000000000000000A /* KeyboardShortcutsViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000A /* KeyboardShortcutsViewController.swift */; };
+		A1000000000000000000000B /* ImageLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* ImageLoader.swift */; };
+		A1000000000000000000000C /* ImageCacheManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* ImageCacheManager.swift */; };
+		A1000000000000000000000D /* FileListManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000D /* FileListManager.swift */; };
+		A1000000000000000000000E /* FolderAccessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000E /* FolderAccessManager.swift */; };
+		A1000000000000000000000F /* DSStoreReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* DSStoreReader.swift */; };
+		A10000000000000000000010 /* DefaultFileAssociationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* DefaultFileAssociationManager.swift */; };
+		A10000000000000000000011 /* ImageLinkDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000017 /* ImageLinkDetector.swift */; };
+		A10000000000000000000013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* Assets.xcassets */; };
+		A10000000000000000000014 /* FastViewerFlower.icon in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* FastViewerFlower.icon */; };
+		A10000000000000000000015 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = A40000000000000000000001 /* Main.storyboard */; };
+		B10000000000000000000001 /* ImageLoaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* ImageLoaderTests.swift */; };
+		B10000000000000000000002 /* ViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* ViewControllerTests.swift */; };
+		B10000000000000000000003 /* FileListManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000003 /* FileListManagerTests.swift */; };
+		B10000000000000000000004 /* DefaultFileAssociationManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000004 /* DefaultFileAssociationManagerTests.swift */; };
+		B10000000000000000000005 /* ImageCacheManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000005 /* ImageCacheManagerTests.swift */; };
+		B10000000000000000000006 /* SettingsManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000006 /* SettingsManagerTests.swift */; };
+		B10000000000000000000007 /* SettingsViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000007 /* SettingsViewControllerTests.swift */; };
+		B10000000000000000000008 /* AboutViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000008 /* AboutViewControllerTests.swift */; };
+		B10000000000000000000009 /* FolderAccessManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000009 /* FolderAccessManagerTests.swift */; };
+		B1000000000000000000000A /* AppDelegateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000A /* AppDelegateTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B60000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = FA97D7862EF4905700EE6799 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = FA97D78D2EF4905700EE6799;
+			remoteInfo = "FastViewer Lite";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		A20000000000000000000001 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A20000000000000000000002 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		A20000000000000000000003 /* ViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewController.swift; sourceTree = "<group>"; };
+		A20000000000000000000004 /* DraggableImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraggableImageView.swift; sourceTree = "<group>"; };
+		A20000000000000000000005 /* DraggableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DraggableView.swift; sourceTree = "<group>"; };
+		A20000000000000000000006 /* NonInteractiveImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NonInteractiveImageView.swift; sourceTree = "<group>"; };
+		A20000000000000000000007 /* SettingsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewController.swift; sourceTree = "<group>"; };
+		A20000000000000000000008 /* SettingsManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManager.swift; sourceTree = "<group>"; };
+		A20000000000000000000009 /* AboutViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutViewController.swift; sourceTree = "<group>"; };
+		A2000000000000000000000A /* KeyboardShortcutsViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutsViewController.swift; sourceTree = "<group>"; };
+		A2000000000000000000000B /* ImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageLoader.swift; sourceTree = "<group>"; };
+		A2000000000000000000000C /* ImageCacheManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageCacheManager.swift; sourceTree = "<group>"; };
+		A2000000000000000000000D /* FileListManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileListManager.swift; sourceTree = "<group>"; };
+		A2000000000000000000000E /* FolderAccessManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderAccessManager.swift; sourceTree = "<group>"; };
+		A2000000000000000000000F /* DSStoreReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DSStoreReader.swift; sourceTree = "<group>"; };
+		A20000000000000000000010 /* DefaultFileAssociationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultFileAssociationManager.swift; sourceTree = "<group>"; };
+		A20000000000000000000011 /* XPCImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XPCImageLoader.swift; sourceTree = "<group>"; };
+		A20000000000000000000012 /* ImageProcessingProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageProcessingProtocol.swift; sourceTree = "<group>"; };
+		A20000000000000000000013 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A20000000000000000000014 /* FastViewerFlower.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = FastViewerFlower.icon; sourceTree = "<group>"; };
+		A20000000000000000000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A20000000000000000000016 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
+		A20000000000000000000017 /* ImageLinkDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageLinkDetector.swift; sourceTree = "<group>"; };
+		B20000000000000000000001 /* ImageLoaderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageLoaderTests.swift; sourceTree = "<group>"; };
+		B20000000000000000000002 /* ViewControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewControllerTests.swift; sourceTree = "<group>"; };
+		B20000000000000000000003 /* FileListManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileListManagerTests.swift; sourceTree = "<group>"; };
+		B20000000000000000000004 /* DefaultFileAssociationManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DefaultFileAssociationManagerTests.swift; sourceTree = "<group>"; };
+		B20000000000000000000005 /* ImageCacheManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageCacheManagerTests.swift; sourceTree = "<group>"; };
+		B20000000000000000000006 /* SettingsManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsManagerTests.swift; sourceTree = "<group>"; };
+		B20000000000000000000007 /* SettingsViewControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewControllerTests.swift; sourceTree = "<group>"; };
+		B20000000000000000000008 /* AboutViewControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutViewControllerTests.swift; sourceTree = "<group>"; };
+		B20000000000000000000009 /* FolderAccessManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderAccessManagerTests.swift; sourceTree = "<group>"; };
+		B2000000000000000000000A /* AppDelegateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegateTests.swift; sourceTree = "<group>"; };
+		B2000000000000000000000B /* FastViewerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FastViewerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		FA97D78E2EF4905700EE6799 /* FastViewer Lite.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "FastViewer Lite.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		B50000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FA97D78B2EF4905700EE6799 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A30000000000000000000001 /* FastViewerLite */ = {
+			isa = PBXGroup;
+			children = (
+				A30000000000000000000002 /* Application */,
+				A30000000000000000000003 /* Features */,
+				A30000000000000000000008 /* Core */,
+				A3000000000000000000000B /* Infrastructure */,
+				A3000000000000000000000E /* Resources */,
+				A3000000000000000000000F /* Supporting Files */,
+			);
+			path = FastViewerLite;
+			sourceTree = "<group>";
+		};
+		A30000000000000000000002 /* Application */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000001 /* main.swift */,
+				A20000000000000000000002 /* AppDelegate.swift */,
+			);
+			name = Application;
+			sourceTree = "<group>";
+		};
+		A30000000000000000000003 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				A30000000000000000000004 /* Viewer */,
+				A30000000000000000000005 /* Settings */,
+				A30000000000000000000006 /* About */,
+				A30000000000000000000007 /* Keyboard Shortcuts */,
+			);
+			name = Features;
+			sourceTree = "<group>";
+		};
+		A30000000000000000000004 /* Viewer */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000003 /* ViewController.swift */,
+				A20000000000000000000004 /* DraggableImageView.swift */,
+				A20000000000000000000005 /* DraggableView.swift */,
+				A20000000000000000000006 /* NonInteractiveImageView.swift */,
+				A20000000000000000000017 /* ImageLinkDetector.swift */,
+			);
+			name = Viewer;
+			sourceTree = "<group>";
+		};
+		A30000000000000000000005 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000007 /* SettingsViewController.swift */,
+				A20000000000000000000008 /* SettingsManager.swift */,
+			);
+			name = Settings;
+			sourceTree = "<group>";
+		};
+		A30000000000000000000006 /* About */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000009 /* AboutViewController.swift */,
+			);
+			name = About;
+			sourceTree = "<group>";
+		};
+		A30000000000000000000007 /* Keyboard Shortcuts */ = {
+			isa = PBXGroup;
+			children = (
+				A2000000000000000000000A /* KeyboardShortcutsViewController.swift */,
+			);
+			name = "Keyboard Shortcuts";
+			sourceTree = "<group>";
+		};
+		A30000000000000000000008 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				A30000000000000000000009 /* Imaging */,
+				A3000000000000000000000A /* File System */,
+			);
+			name = Core;
+			sourceTree = "<group>";
+		};
+		A30000000000000000000009 /* Imaging */ = {
+			isa = PBXGroup;
+			children = (
+				A2000000000000000000000B /* ImageLoader.swift */,
+				A2000000000000000000000C /* ImageCacheManager.swift */,
+			);
+			name = Imaging;
+			sourceTree = "<group>";
+		};
+		A3000000000000000000000A /* File System */ = {
+			isa = PBXGroup;
+			children = (
+				A2000000000000000000000D /* FileListManager.swift */,
+				A2000000000000000000000E /* FolderAccessManager.swift */,
+				A2000000000000000000000F /* DSStoreReader.swift */,
+			);
+			name = "File System";
+			sourceTree = "<group>";
+		};
+		A3000000000000000000000B /* Infrastructure */ = {
+			isa = PBXGroup;
+			children = (
+				A3000000000000000000000C /* System Integration */,
+				A3000000000000000000000D /* XPC */,
+			);
+			name = Infrastructure;
+			sourceTree = "<group>";
+		};
+		A3000000000000000000000C /* System Integration */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000010 /* DefaultFileAssociationManager.swift */,
+			);
+			name = "System Integration";
+			sourceTree = "<group>";
+		};
+		A3000000000000000000000D /* XPC */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000011 /* XPCImageLoader.swift */,
+				A20000000000000000000012 /* ImageProcessingProtocol.swift */,
+			);
+			name = XPC;
+			sourceTree = "<group>";
+		};
+		A3000000000000000000000E /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000013 /* Assets.xcassets */,
+				A20000000000000000000014 /* FastViewerFlower.icon */,
+				A40000000000000000000001 /* Main.storyboard */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+		};
+		A3000000000000000000000F /* Supporting Files */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000000000015 /* Info.plist */,
+			);
+			name = "Supporting Files";
+			sourceTree = "<group>";
+		};
+		B30000000000000000000001 /* FastViewerTests */ = {
+			isa = PBXGroup;
+			children = (
+				B20000000000000000000001 /* ImageLoaderTests.swift */,
+				B20000000000000000000002 /* ViewControllerTests.swift */,
+				B20000000000000000000003 /* FileListManagerTests.swift */,
+				B20000000000000000000004 /* DefaultFileAssociationManagerTests.swift */,
+				B20000000000000000000005 /* ImageCacheManagerTests.swift */,
+				B20000000000000000000006 /* SettingsManagerTests.swift */,
+				B20000000000000000000007 /* SettingsViewControllerTests.swift */,
+				B20000000000000000000008 /* AboutViewControllerTests.swift */,
+				B20000000000000000000009 /* FolderAccessManagerTests.swift */,
+				B2000000000000000000000A /* AppDelegateTests.swift */,
+			);
+			path = FastViewerTests;
+			sourceTree = "<group>";
+		};
+		FA97D7852EF4905700EE6799 = {
+			isa = PBXGroup;
+			children = (
+				A30000000000000000000001 /* FastViewerLite */,
+				B30000000000000000000001 /* FastViewerTests */,
+				FA97D78F2EF4905700EE6799 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		FA97D78F2EF4905700EE6799 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FA97D78E2EF4905700EE6799 /* FastViewer Lite.app */,
+				B2000000000000000000000B /* FastViewerTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B70000000000000000000001 /* FastViewerTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B80000000000000000000003 /* Build configuration list for PBXNativeTarget "FastViewerTests" */;
+			buildPhases = (
+				B90000000000000000000001 /* Sources */,
+				B50000000000000000000001 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B60000000000000000000002 /* PBXTargetDependency */,
+			);
+			name = FastViewerTests;
+			packageProductDependencies = (
+			);
+			productName = FastViewerTests;
+			productReference = B2000000000000000000000B /* FastViewerTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		FA97D78D2EF4905700EE6799 /* FastViewer Lite */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = FA97D79C2EF4905800EE6799 /* Build configuration list for PBXNativeTarget "FastViewer Lite" */;
+			buildPhases = (
+				FA97D78A2EF4905700EE6799 /* Sources */,
+				FA97D78B2EF4905700EE6799 /* Frameworks */,
+				FA97D78C2EF4905700EE6799 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "FastViewer Lite";
+			packageProductDependencies = (
+			);
+			productName = "FastViewer Lite";
+			productReference = FA97D78E2EF4905700EE6799 /* FastViewer Lite.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		FA97D7862EF4905700EE6799 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2620;
+				LastUpgradeCheck = 2630;
+				TargetAttributes = {
+					B70000000000000000000001 = {
+						CreatedOnToolsVersion = 26.2;
+						TestTargetID = FA97D78D2EF4905700EE6799;
+					};
+					FA97D78D2EF4905700EE6799 = {
+						CreatedOnToolsVersion = 26.2;
+					};
+				};
+			};
+			buildConfigurationList = FA97D7892EF4905700EE6799 /* Build configuration list for PBXProject "FastViewerLite" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = FA97D7852EF4905700EE6799;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = FA97D78F2EF4905700EE6799 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				FA97D78D2EF4905700EE6799 /* FastViewer Lite */,
+				B70000000000000000000001 /* FastViewerTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		FA97D78C2EF4905700EE6799 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000013 /* Assets.xcassets in Resources */,
+				A10000000000000000000014 /* FastViewerFlower.icon in Resources */,
+				A10000000000000000000015 /* Main.storyboard in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B90000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000000000000000000001 /* ImageLoaderTests.swift in Sources */,
+				B10000000000000000000002 /* ViewControllerTests.swift in Sources */,
+				B10000000000000000000003 /* FileListManagerTests.swift in Sources */,
+				B10000000000000000000004 /* DefaultFileAssociationManagerTests.swift in Sources */,
+				B10000000000000000000005 /* ImageCacheManagerTests.swift in Sources */,
+				B10000000000000000000006 /* SettingsManagerTests.swift in Sources */,
+				B10000000000000000000007 /* SettingsViewControllerTests.swift in Sources */,
+				B10000000000000000000008 /* AboutViewControllerTests.swift in Sources */,
+				B10000000000000000000009 /* FolderAccessManagerTests.swift in Sources */,
+				B1000000000000000000000A /* AppDelegateTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		FA97D78A2EF4905700EE6799 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000000000001 /* main.swift in Sources */,
+				A10000000000000000000002 /* AppDelegate.swift in Sources */,
+				A10000000000000000000003 /* ViewController.swift in Sources */,
+				A10000000000000000000004 /* DraggableImageView.swift in Sources */,
+				A10000000000000000000005 /* DraggableView.swift in Sources */,
+				A10000000000000000000006 /* NonInteractiveImageView.swift in Sources */,
+				A10000000000000000000007 /* SettingsViewController.swift in Sources */,
+				A10000000000000000000008 /* SettingsManager.swift in Sources */,
+				A10000000000000000000009 /* AboutViewController.swift in Sources */,
+				A1000000000000000000000A /* KeyboardShortcutsViewController.swift in Sources */,
+				A1000000000000000000000B /* ImageLoader.swift in Sources */,
+				A1000000000000000000000C /* ImageCacheManager.swift in Sources */,
+				A1000000000000000000000D /* FileListManager.swift in Sources */,
+				A1000000000000000000000E /* FolderAccessManager.swift in Sources */,
+				A1000000000000000000000F /* DSStoreReader.swift in Sources */,
+				A10000000000000000000010 /* DefaultFileAssociationManager.swift in Sources */,
+				A10000000000000000000011 /* ImageLinkDetector.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B60000000000000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = FA97D78D2EF4905700EE6799 /* FastViewer Lite */;
+			targetProxy = B60000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin PBXVariantGroup section */
+		A40000000000000000000001 /* Main.storyboard */ = {
+			isa = PBXVariantGroup;
+			children = (
+				A20000000000000000000016 /* Base */,
+			);
+			name = Main.storyboard;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin XCBuildConfiguration section */
+		B80000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = R4XBLW5C2Z;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aleksandr.deplov.FastViewerLiteTests;
+				PRODUCT_MODULE_NAME = FastViewerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FastViewer Lite.app/Contents/MacOS/FastViewer Lite";
+			};
+			name = Debug;
+		};
+		B80000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = R4XBLW5C2Z;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aleksandr.deplov.FastViewerLiteTests;
+				PRODUCT_MODULE_NAME = FastViewerTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FastViewer Lite.app/Contents/MacOS/FastViewer Lite";
+			};
+			name = Release;
+		};
+		FA97D79A2EF4905800EE6799 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = R4XBLW5C2Z;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		FA97D79B2EF4905800EE6799 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = R4XBLW5C2Z;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		FA97D79D2EF4905800EE6799 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = FastViewerFlower;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = R4XBLW5C2Z;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FastViewerLite/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "FastViewer Lite";
+				INFOPLIST_KEY_CFBundleDocumentTypes = "(\n    {\n        CFBundleTypeExtensions =         (\n            jpg,\n            jpeg,\n            JPG,\n            JPEG\n        );\n        CFBundleTypeIconFile = \"\";\n        CFBundleTypeName = \"JPEG Image\";\n        CFBundleTypeRole = Viewer;\n        LSItemContentTypes =         (\n            \"public.jpeg\",\n            \"public.jpeg-2000\"\n        );\n    },\n    {\n        CFBundleTypeExtensions =         (\n            png,\n            PNG\n        );\n        CFBundleTypeIconFile = \"\";\n        CFBundleTypeName = \"PNG Image\";\n        CFBundleTypeRole = Viewer;\n        LSItemContentTypes =         (\n            \"public.png\"\n        );\n    },\n    {\n        CFBundleTypeExtensions =         (\n            webp,\n            WEBP\n        );\n        CFBundleTypeIconFile = \"\";\n        CFBundleTypeName = \"WebP Image\";\n        CFBundleTypeRole = Viewer;\n        LSItemContentTypes =         (\n            \"org.webmproject.webp\"\n        );\n    },\n    {\n        CFBundleTypeExtensions =         (\n            avif,\n            AVIF\n        );\n        CFBundleTypeIconFile = \"\";\n        CFBundleTypeName = \"AVIF Image\";\n        CFBundleTypeRole = Viewer;\n        LSItemContentTypes =         (\n            \"public.avif\"\n        );\n    },\n    {\n        CFBundleTypeExtensions =         (\n            heic,\n            HEIC,\n            heif,\n            HEIF\n        );\n        CFBundleTypeIconFile = \"\";\n        CFBundleTypeName = \"HEIC Image\";\n        CFBundleTypeRole = Viewer;\n        LSItemContentTypes =         (\n            \"public.heic\",\n            \"public.heif\"\n        );\n    }\n)";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_UTImportedTypeDeclarations = "(\n    {\n        UTTypeConformsTo =         (\n            \"public.image\"\n        );\n        UTTypeDescription = \"WebP Image\";\n        UTTypeIdentifier = \"org.webmproject.webp\";\n        UTTypeTagSpecification =         {\n            \"public.filename-extension\" =             (\n                webp\n            );\n            \"public.mime-type\" = \"image/webp\";\n        };\n    },\n    {\n        UTTypeConformsTo =         (\n            \"public.image\"\n        );\n        UTTypeDescription = \"AVIF Image\";\n        UTTypeIdentifier = \"public.avif\";\n        UTTypeTagSpecification =         {\n            \"public.filename-extension\" =             (\n                avif\n            );\n            \"public.mime-type\" = \"image/avif\";\n        };\n    }\n)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 2.4;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aleksandr.deplov.FastViewerLite;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		FA97D79E2EF4905800EE6799 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = FastViewerFlower;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = R4XBLW5C2Z;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FastViewerLite/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "FastViewer Lite";
+				INFOPLIST_KEY_CFBundleDocumentTypes = "(\n    {\n        CFBundleTypeExtensions =         (\n            jpg,\n            jpeg,\n            JPG,\n            JPEG\n        );\n        CFBundleTypeIconFile = \"\";\n        CFBundleTypeName = \"JPEG Image\";\n        CFBundleTypeRole = Viewer;\n        LSItemContentTypes =         (\n            \"public.jpeg\",\n            \"public.jpeg-2000\"\n        );\n    },\n    {\n        CFBundleTypeExtensions =         (\n            png,\n            PNG\n        );\n        CFBundleTypeIconFile = \"\";\n        CFBundleTypeName = \"PNG Image\";\n        CFBundleTypeRole = Viewer;\n        LSItemContentTypes =         (\n            \"public.png\"\n        );\n    },\n    {\n        CFBundleTypeExtensions =         (\n            webp,\n            WEBP\n        );\n        CFBundleTypeIconFile = \"\";\n        CFBundleTypeName = \"WebP Image\";\n        CFBundleTypeRole = Viewer;\n        LSItemContentTypes =         (\n            \"org.webmproject.webp\"\n        );\n    },\n    {\n        CFBundleTypeExtensions =         (\n            avif,\n            AVIF\n        );\n        CFBundleTypeIconFile = \"\";\n        CFBundleTypeName = \"AVIF Image\";\n        CFBundleTypeRole = Viewer;\n        LSItemContentTypes =         (\n            \"public.avif\"\n        );\n    },\n    {\n        CFBundleTypeExtensions =         (\n            heic,\n            HEIC,\n            heif,\n            HEIF\n        );\n        CFBundleTypeIconFile = \"\";\n        CFBundleTypeName = \"HEIC Image\";\n        CFBundleTypeRole = Viewer;\n        LSItemContentTypes =         (\n            \"public.heic\",\n            \"public.heif\"\n        );\n    }\n)";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSPrincipalClass = NSApplication;
+				INFOPLIST_KEY_UTImportedTypeDeclarations = "(\n    {\n        UTTypeConformsTo =         (\n            \"public.image\"\n        );\n        UTTypeDescription = \"WebP Image\";\n        UTTypeIdentifier = \"org.webmproject.webp\";\n        UTTypeTagSpecification =         {\n            \"public.filename-extension\" =             (\n                webp\n            );\n            \"public.mime-type\" = \"image/webp\";\n        };\n    },\n    {\n        UTTypeConformsTo =         (\n            \"public.image\"\n        );\n        UTTypeDescription = \"AVIF Image\";\n        UTTypeIdentifier = \"public.avif\";\n        UTTypeTagSpecification =         {\n            \"public.filename-extension\" =             (\n                avif\n            );\n            \"public.mime-type\" = \"image/avif\";\n        };\n    }\n)";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 12.0;
+				MARKETING_VERSION = 2.4;
+				PRODUCT_BUNDLE_IDENTIFIER = com.aleksandr.deplov.FastViewerLite;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				REGISTER_APP_GROUPS = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B80000000000000000000003 /* Build configuration list for PBXNativeTarget "FastViewerTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B80000000000000000000001 /* Debug */,
+				B80000000000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FA97D7892EF4905700EE6799 /* Build configuration list for PBXProject "FastViewerLite" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FA97D79A2EF4905800EE6799 /* Debug */,
+				FA97D79B2EF4905800EE6799 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		FA97D79C2EF4905800EE6799 /* Build configuration list for PBXNativeTarget "FastViewer Lite" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FA97D79D2EF4905800EE6799 /* Debug */,
+				FA97D79E2EF4905800EE6799 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = FA97D7862EF4905700EE6799 /* Project object */;
+}

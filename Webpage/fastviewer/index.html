@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description"
+        content="FastViewer - A fast, privacy-focused image viewer for macOS. GPU-accelerated rendering, no AI training, no analytics. View JPG, PNG, WEBP, and AVIF images instantly.">
+    <meta name="keywords"
+        content="FastViewer, image viewer, macOS, image viewer app, privacy, fast image viewer, macOS app, image browser">
+    <meta name="author" content="Pleeq Software">
+    <meta name="theme-color" content="#000000">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://pleeq.com/macos-apps/fastviewer/">
+    <meta property="og:title" content="FastViewer - Fast image viewer for macOS">
+    <meta property="og:description"
+        content="Fast image viewer for macOS that doesn't use your files to train AI. GPU-accelerated rendering with complete privacy.">
+    <meta property="og:image"
+        content="https://pleeq.com/macos-apps/fastviewer/images/og-image-fastviewer-for-macos.jpg">
+    <meta property="og:site_name" content="FastViewer">
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="FastViewer - Fast image viewer for macOS">
+    <meta name="twitter:description"
+        content="Fast image viewer for macOS that doesn't use your files to train AI. GPU-accelerated rendering with complete privacy.">
+    <meta name="twitter:image" content="/images/og-image-fastviewer-for-macos.jpg">
+
+    <title>FastViewer - Fast image viewer for macOS</title>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <link rel="apple-touch-icon" href="./images/FastViewer-app-icon-macos.png">
+    <style>
+        :root {
+            --bg-color: #161617;
+            --text-color: #ffffff;
+            --secondary-text: #a1a1a6;
+            --accent-blue: #0071e3;
+            --card-bg: #1d1d1f;
+        }
+
+        * {
+            line-height: normal;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        p {
+            font-size: 22px;
+            font-weight: 600;
+            color: #F3EEE7;
+        }
+
+        .app-label {
+            margin-bottom: 10px;
+            margin-top: 0;
+            font-size: 15px;
+            font-weight: 500;
+            background-color: #2a2a2a;
+            border-radius: 10px;
+            padding: 6px 12px;
+            display: inline-block;
+        }
+
+        .features-description {
+            max-width: 600px;
+            margin: 0px auto 0;
+        }
+
+        /* Navigation */
+        nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 40px;
+            max-width: 1000px;
+            margin: 0 auto;
+            font-size: 14px;
+            font-weight: 600;
+            position: relative;
+        }
+
+        .nav-links {
+            display: flex;
+        }
+
+        .nav-links a {
+            color: var(--text-color);
+            text-decoration: none;
+            margin-left: 25px;
+            font-size: 14px;
+        }
+
+        .nav-links a:hover {
+            text-decoration: underline;
+        }
+
+        .menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            color: var(--text-color);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 8px;
+            z-index: 100;
+        }
+
+        .mobile-menu {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background-color: var(--card-bg);
+            padding: 20px;
+            border-radius: 10px;
+            margin: 10px 20px;
+            z-index: 99;
+        }
+
+        .mobile-menu.active {
+            display: block;
+        }
+
+        .mobile-menu a {
+            display: block;
+            color: var(--text-color);
+            text-decoration: none;
+            padding: 12px 0;
+            font-size: 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .mobile-menu a:last-child {
+            border-bottom: none;
+        }
+
+        .mobile-menu a:hover {
+            text-decoration: underline;
+        }
+
+        .logo-placeholder {
+            padding: 8px 16px;
+            background: #2a2a2a;
+            border-radius: 6px;
+            text-align: center;
+            white-space: nowrap;
+            color: #ffffff;
+            display: inline-block;
+            text-decoration: none;
+            transition: background-color 0.2s, color 0.2s;
+        }
+
+        .logo-placeholder:hover {
+            background: #ffffff;
+            color: #2a2a2a;
+        }
+
+        /* Hero Section */
+        .hero {
+            text-align: center;
+            padding: 60px 20px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .app-icon {
+            width: 120px;
+            height: 120px;
+            margin: 0 auto 0px;
+            display: block;
+            text-decoration: none;
+            transition: transform 0.2s, opacity 0.2s;
+        }
+
+        .app-icon:hover {
+            transform: scale(1.05);
+            opacity: 0.9;
+        }
+
+        .app-icon img {
+            width: 100%;
+            height: 100%;
+            border-radius: 18px;
+            object-fit: contain;
+        }
+
+        h1 {
+            font-size: 48px;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            margin-bottom: 20px;
+        }
+
+        h2 {
+            font-size: 50px;
+        }
+
+        .btn-download {
+            background-color: var(--accent-blue);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 9999px;
+            text-decoration: none;
+            font-weight: 600;
+            display: inline-block;
+            margin-bottom: 10px;
+            transition: background-color 0.2s;
+        }
+
+        .btn-download:hover {
+            background-color: #0056CC;
+        }
+
+        .version-text {
+            color: var(--secondary-text);
+            font-size: 12px;
+            display: block;
+        }
+
+        /* Mockup Area */
+        .mockup-container {
+            margin: 40px auto;
+            max-width: 1000px;
+            height: auto;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .hero-video {
+            width: 100%;
+            height: 100%;
+            border-radius: 22px;
+            object-fit: cover;
+        }
+
+        .video-label {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 8px 16px;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 20px;
+            color: #ffffff;
+            font-size: 14px;
+            font-weight: 500;
+            white-space: nowrap;
+            z-index: 10;
+        }
+
+        /* Features Grid */
+        .features-section {
+            padding: 80px 20px;
+            text-align: center;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        .features-section h2 {
+            margin-bottom: 10px;
+        }
+
+        .features-section p {
+            color: #7A7774;
+        }
+
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 40px;
+            margin-top: 60px;
+        }
+
+        .feature-item {
+            font-size: 22px;
+            font-weight: 600;
+            color: #F3EEE7;
+        }
+
+        .feature-icon {
+            width: 30px;
+            height: 30px;
+            background: #333;
+            margin: 0 auto 15px;
+            border-radius: 4px;
+        }
+
+        .feature-icon.finder-icon {
+            width: 44px;
+            height: 44px;
+            background: none;
+            border-radius: 0;
+        }
+
+        .feature-icon.finder-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            filter: brightness(0) invert(1);
+        }
+
+        .feature-icon.robot-icon {
+            width: 44px;
+            height: 44px;
+            background: none;
+            border-radius: 0;
+        }
+
+        .feature-icon.robot-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            filter: brightness(0) invert(1);
+        }
+
+        .feature-icon.file-icon {
+            width: 44px;
+            height: 44px;
+            background: none;
+            border-radius: 0;
+        }
+
+        .feature-icon.file-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            filter: brightness(0) invert(1);
+        }
+
+        .feature-icon.info-icon {
+            width: 44px;
+            height: 44px;
+            background: none;
+            border-radius: 0;
+        }
+
+        .feature-icon.info-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            filter: brightness(0) invert(1);
+        }
+
+        .feature-icon.frame-icon {
+            width: 44px;
+            height: 44px;
+            background: none;
+            border-radius: 0;
+        }
+
+        .feature-icon.frame-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            filter: brightness(0) invert(1);
+        }
+
+        .feature-icon.zoom-icon {
+            width: 44px;
+            height: 44px;
+            background: none;
+            border-radius: 0;
+        }
+
+        .feature-icon.zoom-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            filter: brightness(0) invert(1);
+        }
+
+        .feature-icon.recycle-icon {
+            width: 44px;
+            height: 44px;
+            background: none;
+            border-radius: 0;
+        }
+
+        .feature-icon.recycle-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            filter: brightness(0) invert(1);
+        }
+
+        .feature-icon.undo-icon {
+            width: 44px;
+            height: 44px;
+            background: none;
+            border-radius: 0;
+        }
+
+        .feature-icon.undo-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            filter: brightness(0) invert(1);
+        }
+
+        /* Text Details Section */
+        .details-section {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 30px 30px;
+            max-width: 500px;
+            margin: 20px auto;
+            padding: 0 10px;
+        }
+
+        .detail-block h3 {
+            font-size: 22px;
+            margin-bottom: 0;
+            padding: 0;
+        }
+
+        .detail-block p {
+            font-size: 22px;
+            font-weight: 600;
+            color: #7A7774;
+            margin-top: 10px;
+        }
+
+        .detail-block-full {
+            grid-column: 1 / -1;
+        }
+
+        .shortcuts-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .shortcuts-table td {
+            padding: 12px 0;
+            font-size: 18px;
+            font-weight: 500;
+            color: #F3EEE7;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .shortcuts-table td:first-child {
+            text-align: left;
+            color: #7A7774;
+        }
+
+        .shortcuts-table td:last-child {
+            text-align: right;
+            font-weight: 600;
+            color: var(--secondary-text);
+        }
+
+        .shortcuts-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 100px 20px;
+        }
+
+        .footer-icon {
+            width: 180px;
+            height: 180px;
+            border-radius: 25px;
+            margin: 0 auto 30px;
+            display: block;
+            text-decoration: none;
+            transition: transform 0.2s, opacity 0.2s;
+        }
+
+        .footer-icon:hover {
+            transform: scale(1.05);
+            opacity: 0.9;
+        }
+
+        .footer-icon img {
+            width: 100%;
+            height: 100%;
+            border-radius: 25px;
+            object-fit: contain;
+        }
+
+        @media (max-width: 768px) {
+            nav {
+                padding: 20px;
+            }
+
+            .nav-links {
+                display: none;
+            }
+
+            .menu-toggle {
+                display: block;
+            }
+
+            .mockup-container {
+                margin: 40px 0 0 0;
+                padding: 0;
+                max-width: 100%;
+            }
+
+            .hero-video {
+                border-radius: 0;
+                width: 100%;
+                max-width: 100%;
+            }
+
+            .features-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 30px;
+            }
+
+            .details-section {
+                grid-template-columns: 1fr;
+                gap: 0;
+                max-width: 600px;
+                padding: 0 30px;
+                margin: 20px auto;
+            }
+
+            h1 {
+                font-size: 32px;
+            }
+
+            h2 {
+                font-size: 36px;
+            }
+
+            p {
+                font-size: 18px;
+            }
+
+            .hero {
+                padding: 40px 20px;
+            }
+
+            .features-section {
+                padding: 60px 20px;
+            }
+
+            .feature-item {
+                font-size: 18px;
+            }
+
+            .detail-block h3 {
+                font-size: 20px;
+            }
+
+            .detail-block p {
+                font-size: 18px;
+            }
+
+            .shortcuts-table td {
+                font-size: 16px;
+            }
+
+            footer {
+                padding: 60px 20px;
+            }
+
+            .video-label {
+                display: none;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <nav>
+        <a href="https://pleeq.com" class="logo-placeholder">Pleeq Software</a>
+        <div class="nav-links">
+            <a href="mailto:deplovsbrothers@gmail.com?subject=FastViewer%20app">Support</a>
+        </div>
+        <button class="menu-toggle" id="menuToggle" aria-label="Toggle menu">☰</button>
+        <div class="mobile-menu" id="mobileMenu">
+            <a href="mailto:deplovsbrothers@gmail.com?subject=FastViewer%20app">Support</a>
+        </div>
+    </nav>
+
+    <header class="hero">
+        <a href="https://pleeq.com/macos-apps/fastviewer/FastViewer-Installer.dmg.zip" class="app-icon"
+            data-goatcounter-title="Download" data-goatcounter-referrer="hero-app-icon">
+            <img src="./images/FastViewer-app-icon-macos.png"
+                srcset="./images/FastViewer-app-icon-macos.png 1x, ./images/FastViewer-app-icon-macos@2x.png 2x"
+                alt="FastViewer App Icon">
+        </a>
+        <p class="app-label">FastViewer</p>
+        <h1>Fast image viewer for macOS that doesn't use your files to train AI</h1>
+        <a href="https://pleeq.com/macos-apps/fastviewer/FastViewer-Installer.dmg.zip" class="btn-download"
+            data-goatcounter-title="Download" data-goatcounter-referrer="hero-download-button">Download
+            Now</a>
+        <span class="version-text">macOS Monterey 12.0+</span>
+    </header>
+
+    <section class="mockup-container">
+        <div class="video-label">Fast image switching with prefetching</div>
+        <video class="hero-video" autoplay loop muted playsinline>
+            <source src="FastViewer-hero-video.mp4" type="video/mp4">
+        </video>
+    </section>
+
+    <section class="features-section">
+        <h2>Made to be Fast</h2>
+        <p class="features-description">
+            FastViewer loads images instantly with GPU-accelerated rendering, smart prefetching, and efficient caching.
+            Navigate large galleries smoothly with zero lag.
+        </p>
+
+        <div class="features-grid">
+            <div class="feature-item">
+                <div class="feature-icon robot-icon">
+                    <img src="./images/robot.svg" alt="No AI">
+                </div>No AI, no app analytics
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon file-icon">
+                    <img src="./images/file-jpg.svg" alt="File formats">
+                </div>JPG, PNG, WEBP, AVIF support
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon info-icon">
+                    <img src="./images/info.svg" alt="File info">
+                </div>Show file size, resolution or date
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon frame-icon">
+                    <img src="./images/frame-corners.svg" alt="Resize window">
+                </div>Resize window to fit the image
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon zoom-icon">
+                    <img src="./images/magnifying-glass-plus.svg" alt="Zoom">
+                </div>Zoom in, zoom out
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon finder-icon">
+                    <img src="./images/sidebar.svg" alt="Show in Finder">
+                </div>Show image in Finder
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon recycle-icon">
+                    <img src="./images/recycle.svg" alt="Move to Trash">
+                </div>Move current file to Trash
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon undo-icon">
+                    <img src="./images/arrow-counter-clockwise.svg" alt="Undo">
+                </div>Undo deleting the file
+            </div>
+        </div>
+    </section>
+
+    <section class="details-section">
+        <div class="detail-block">
+            <h3>Navigate</h3>
+            <p>Browse your photo collection with simple arrow key navigation. The app automatically loads surrounding
+                images ahead of time, so every transition feels instant and smooth.</p>
+        </div>
+        <div class="detail-block">
+            <h3>Control</h3>
+            <p>Customize FastViewer to match your workflow: adjust prefetching, choose supported formats, and control
+                what information is displayed.</p>
+        </div>
+        <div class="detail-block">
+            <h3>Privacy First</h3>
+            <p>FastViewer operates with complete privacy: no AI model training, no in-app analytics. All image
+                processing happens locally on your device.</p>
+        </div>
+        <div class="detail-block detail-block-full">
+            <h3>Keyboard Shortcuts</h3>
+            <table class="shortcuts-table">
+                <tr>
+                    <td>Open file (or double-click empty window)</td>
+                    <td>⌘O</td>
+                </tr>
+                <tr>
+                    <td>Previous image</td>
+                    <td>←</td>
+                </tr>
+                <tr>
+                    <td>Next image</td>
+                    <td>→</td>
+                </tr>
+                <tr>
+                    <td>Set small window</td>
+                    <td>⌘1</td>
+                </tr>
+                <tr>
+                    <td>Set medium window</td>
+                    <td>⌘2</td>
+                </tr>
+                <tr>
+                    <td>Set big window</td>
+                    <td>⌘3</td>
+                </tr>
+                <tr>
+                    <td>Fit window to image</td>
+                    <td>⌘4</td>
+                </tr>
+                <tr>
+                    <td>Reveal file in Finder</td>
+                    <td>⌘Enter</td>
+                </tr>
+                <tr>
+                    <td>Move to Trash</td>
+                    <td>⌘⌫</td>
+                </tr>
+                <tr>
+                    <td>Undo delete</td>
+                    <td>⌘Z</td>
+                </tr>
+                <tr>
+                    <td>Open settings</td>
+                    <td>⌘,</td>
+                </tr>
+            </table>
+        </div>
+    </section>
+
+    <footer>
+        <a href="https://pleeq.com/macos-apps/fastviewer/FastViewer-Installer.dmg.zip" class="footer-icon"
+            data-goatcounter-title="Download" data-goatcounter-referrer="footer-app-icon">
+            <img src="./images/FastViewer-app-icon-macos-gray.png"
+                srcset="./images/FastViewer-app-icon-macos-gray.png 1x, ./images/FastViewer-app-icon-macos-gray@2x.png 2x"
+                alt="FastViewer App Icon">
+        </a>
+        <a href="https://pleeq.com/macos-apps/fastviewer/FastViewer-Installer.dmg.zip" class="btn-download"
+            data-goatcounter-title="Download" data-goatcounter-referrer="footer-download-button">Download
+            Now</a>
+        <span class="version-text">macOS Monterey 12.0+</span>
+    </footer>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            const menuToggle = document.getElementById('menuToggle');
+            const mobileMenu = document.getElementById('mobileMenu');
+            const nav = document.querySelector('nav');
+
+            if (menuToggle && mobileMenu) {
+                menuToggle.addEventListener('click', function (event) {
+                    event.stopPropagation();
+                    mobileMenu.classList.toggle('active');
+                });
+
+                // Close menu when clicking outside
+                document.addEventListener('click', function (event) {
+                    if (nav && !nav.contains(event.target)) {
+                        mobileMenu.classList.remove('active');
+                    }
+                });
+
+                // Close menu when window is resized to desktop width
+                window.addEventListener('resize', function () {
+                    if (window.innerWidth > 768) {
+                        mobileMenu.classList.remove('active');
+                    }
+                });
+            }
+        });
+    </script>
+
+    <script data-goatcounter="https://goatfastviewer.goatcounter.com/count" async src="//gc.zgo.at/count.js"></script>
+
+</body>
+
+</html>
