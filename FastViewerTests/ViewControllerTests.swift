@@ -77,7 +77,8 @@ final class ViewControllerTests: XCTestCase {
 
         XCTAssertTrue(imageView.isLinkHoverBorderVisible)
         XCTAssertEqual(imageView.linkHoverBorderBounds, linkBounds)
-        XCTAssertEqual(imageView.linkHoverBorderDashPattern, [5, 3])
+        XCTAssertEqual(imageView.linkHoverBorderDashPattern, [6, 4])
+        XCTAssertEqual(imageView.linkHoverBorderColor, .systemGray)
 
         imageView.hideLinkHoverBorder()
 
@@ -236,18 +237,21 @@ final class ViewControllerTests: XCTestCase {
         // Change background color to a custom color
         viewController.updateBackgroundColor(.red)
 
-        // Call restoreInitialState, which should reset background to window background color
+        // Call restoreInitialState, which should reset background to the empty canvas color
         viewController.restoreInitialState()
 
-        // Verify background color is reset to NSColor.windowBackgroundColor
-        guard let cgColor = viewController.view.layer?.backgroundColor,
-              let currentColor = NSColor(cgColor: cgColor) else {
+        // Verify background color is reset to the standard document-canvas gray
+        guard let currentColor = viewController.view.layer?.backgroundColor else {
             XCTFail("Background color should be set on view layer")
             return
         }
 
-        let expectedColor = NSColor.windowBackgroundColor
-        XCTAssertEqual(currentColor, expectedColor, "restoreInitialState should reset background color to window background color")
+        let expectedColor = ViewController.emptyWindowBackgroundColor
+        XCTAssertEqual(
+            currentColor,
+            expectedColor.cgColor,
+            "restoreInitialState should reset background color to the empty canvas color"
+        )
     }
 
     func testImageScalingForSmallImage() {
@@ -683,18 +687,18 @@ final class ViewControllerTests: XCTestCase {
         // Verify the view has a background color set
         XCTAssertNotNil(viewController.view.layer?.backgroundColor, "View should have a background color")
 
-        // Verify it uses windowBackgroundColor
-        let expectedColor = NSColor.windowBackgroundColor
+        // Verify it uses the standard document-canvas background
+        let expectedColor = ViewController.emptyWindowBackgroundColor
         XCTAssertEqual(
             viewController.view.layer?.backgroundColor,
             expectedColor.cgColor,
-            "View background should use windowBackgroundColor"
+            "Empty view should use the subtle adaptive canvas color"
         )
     }
 
     func testInitialBackgroundColorBasedOnAppearance() {
-        // Verify that initial background color uses windowBackgroundColor (which adapts automatically)
-        let expectedColor = NSColor.windowBackgroundColor
+        // Verify that the initial empty background uses an adaptive standard gray
+        let expectedColor = ViewController.emptyWindowBackgroundColor
 
         // Create a new view controller to test initial state
         let newViewController = ViewController()
@@ -703,7 +707,7 @@ final class ViewControllerTests: XCTestCase {
         XCTAssertEqual(
             newViewController.view.layer?.backgroundColor,
             expectedColor.cgColor,
-            "Initial background color should use windowBackgroundColor"
+            "Initial empty background should use the subtle adaptive canvas color"
         )
     }
 
@@ -1927,7 +1931,13 @@ final class ViewControllerTests: XCTestCase {
         }
     }
 
-    func testRestoreInitialZoom() {
+    func testCommandZeroDisplaysActualSizeWithoutResizingWindow() {
+        let previousAutoResize = SettingsManager.shared.autoResizeToImageSize
+        SettingsManager.shared.autoResizeToImageSize = false
+        defer {
+            SettingsManager.shared.autoResizeToImageSize = previousAutoResize
+        }
+
         // Create a test window and add the view controller's view to it
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
@@ -1938,8 +1948,9 @@ final class ViewControllerTests: XCTestCase {
         window.contentViewController = viewController
         window.makeKeyAndOrderFront(nil)
 
-        // Create a test image
-        let testImage = createTestImage(size: NSSize(width: 800, height: 600))
+        // Use an image that remains larger than the window at physical 100% on Retina.
+        let testImageSize = NSSize(width: 2400, height: 1800)
+        let testImage = createTestImage(size: testImageSize)
         viewController.imageView.image = testImage
 
         // Create a temporary test file
@@ -2005,7 +2016,12 @@ final class ViewControllerTests: XCTestCase {
         let zoomedTransform = viewController.imageView.layer?.transform
         XCTAssertGreaterThan(zoomedTransform?.m11 ?? 1.0, 1.0, "Zoom in should increase scale")
 
-        // Now restore initial zoom with Cmd+0
+        window.setContentSize(NSSize(width: 600, height: 400))
+        viewController.view.layoutSubtreeIfNeeded()
+        let frameBeforeActualSize = window.frame
+        SettingsManager.shared.autoResizeToImageSize = true
+
+        // Display at Actual Size with Cmd+0.
         let restoreEvent = NSEvent.keyEvent(
             with: .keyDown,
             location: .zero,
@@ -2028,15 +2044,79 @@ final class ViewControllerTests: XCTestCase {
         viewController.keyDown(with: restoreKeyEvent)
 
         // Wait a moment for restore to apply
-        let restoreExpectation = XCTestExpectation(description: "Zoom restored")
+        let restoreExpectation = XCTestExpectation(description: "Actual Size applied")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             restoreExpectation.fulfill()
         }
         wait(for: [restoreExpectation], timeout: 0.5)
 
-        // Verify zoom was restored to 1.0
-        let restoredTransform = viewController.imageView.layer?.transform
-        XCTAssertEqual(restoredTransform?.m11 ?? 1.0, 1.0, accuracy: 0.01, "Restore should reset zoom to 1.0")
+        let actualSizeTransform = viewController.imageView.layer?.transform
+        guard let loadedImage = viewController.imageView.image else {
+            XCTFail("Image should remain loaded")
+            return
+        }
+
+        let fittedScale = min(
+            1.0,
+            min(
+                viewController.view.bounds.width / loadedImage.size.width,
+                viewController.view.bounds.height / loadedImage.size.height
+            )
+        )
+        let baseDisplayedSize = NSSize(
+            width: loadedImage.size.width * fittedScale,
+            height: loadedImage.size.height * fittedScale
+        )
+        let backingScale = window.backingScaleFactor
+        let expectedScale = min(
+            (testImageSize.width / backingScale) / baseDisplayedSize.width,
+            (testImageSize.height / backingScale) / baseDisplayedSize.height
+        )
+
+        XCTAssertEqual(
+            actualSizeTransform?.m11 ?? 0,
+            expectedScale,
+            accuracy: 0.01,
+            "Cmd+0 should map image pixels to physical display pixels"
+        )
+        XCTAssertEqual(window.frame.origin.x, frameBeforeActualSize.origin.x, accuracy: 0.01)
+        XCTAssertEqual(window.frame.origin.y, frameBeforeActualSize.origin.y, accuracy: 0.01)
+        XCTAssertEqual(window.frame.width, frameBeforeActualSize.width, accuracy: 0.01)
+        XCTAssertEqual(window.frame.height, frameBeforeActualSize.height, accuracy: 0.01)
+        XCTAssertFalse(
+            SettingsManager.shared.autoResizeToImageSize,
+            "Cmd+0 should disable Fit to Image"
+        )
+        XCTAssertTrue(
+            viewController.isPanningAvailable(),
+            "An Actual Size image extending beyond the window should be pannable"
+        )
+
+        window.setContentSize(NSSize(width: 800, height: 500))
+        viewController.view.layoutSubtreeIfNeeded()
+        viewController.viewDidLayout()
+
+        let resizedFittedScale = min(
+            1.0,
+            min(
+                viewController.view.bounds.width / loadedImage.size.width,
+                viewController.view.bounds.height / loadedImage.size.height
+            )
+        )
+        let resizedBaseSize = NSSize(
+            width: loadedImage.size.width * resizedFittedScale,
+            height: loadedImage.size.height * resizedFittedScale
+        )
+        let expectedResizedTransform = min(
+            (testImageSize.width / backingScale) / resizedBaseSize.width,
+            (testImageSize.height / backingScale) / resizedBaseSize.height
+        )
+        XCTAssertEqual(
+            viewController.imageView.layer?.transform.m11 ?? 0,
+            expectedResizedTransform,
+            accuracy: 0.01,
+            "Actual Size should remain pixel-accurate after resizing the window"
+        )
     }
 
     func testZoomPersistsPerImage() {

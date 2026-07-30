@@ -33,9 +33,9 @@ enum TransparencyBackground: String, CaseIterable {
     var displayName: String {
         switch self {
         case .solidColor:
-            return "solid color"
+            return "Solid color"
         case .checkers:
-            return "checkers"
+            return "Checkers"
         }
     }
 }

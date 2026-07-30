@@ -58,13 +58,36 @@ final class AppDelegateTests: XCTestCase {
             return
         }
         
-        // Verify window background color uses windowBackgroundColor (which adapts automatically)
-        let expectedColor = NSColor.windowBackgroundColor
+        // Verify the empty window uses the adaptive document-canvas gray.
+        let expectedColor = ViewController.emptyWindowBackgroundColor
         
         XCTAssertEqual(
             window.backgroundColor,
             expectedColor,
-            "Window background color should use windowBackgroundColor"
+            "Empty window should use the subtle adaptive canvas color"
+        )
+    }
+
+    func testViewMenuContainsActualSizeCommandZeroItem() {
+        appDelegate.applicationDidFinishLaunching(
+            Notification(name: NSApplication.didFinishLaunchingNotification)
+        )
+
+        let actualSizeItem = NSApp.mainMenu?
+            .items
+            .first { $0.submenu?.title == "View" }?
+            .submenu?
+            .items
+            .first { $0.title == "Actual Size" }
+
+        XCTAssertNotNil(actualSizeItem)
+        XCTAssertEqual(actualSizeItem?.keyEquivalent, "0")
+        XCTAssertTrue(
+            actualSizeItem?.keyEquivalentModifierMask.contains(.command) ?? false
+        )
+        XCTAssertFalse(
+            actualSizeItem?.isEnabled ?? true,
+            "Actual Size should be disabled until an image is loaded"
         )
     }
 
@@ -99,12 +122,12 @@ final class AppDelegateTests: XCTestCase {
             return
         }
         
-        // Verify window has a background color set (should be windowBackgroundColor)
+        // Verify the empty window has the document-canvas background.
         XCTAssertNotNil(window.backgroundColor, "Window should have a background color")
         XCTAssertEqual(
             window.backgroundColor,
-            NSColor.windowBackgroundColor,
-            "Window background should use windowBackgroundColor"
+            ViewController.emptyWindowBackgroundColor,
+            "Empty window should use the subtle adaptive canvas color"
         )
     }
     
@@ -129,8 +152,11 @@ final class AppDelegateTests: XCTestCase {
         // We can't easily test KVO in unit tests, but we verify the update mechanism works
         let initialColor = window.backgroundColor
         
-        // The color should be windowBackgroundColor which adapts to appearance
-        XCTAssertEqual(initialColor, NSColor.windowBackgroundColor, "Initial color should be windowBackgroundColor")
+        XCTAssertEqual(
+            initialColor,
+            ViewController.emptyWindowBackgroundColor,
+            "Initial empty-window color should use the subtle adaptive canvas color"
+        )
     }
     
     func testApplicationShouldTerminateAfterLastWindowClosed() {
@@ -312,4 +338,3 @@ final class AppDelegateTests: XCTestCase {
         XCTAssertEqual(appDelegate.window, window, "Should be the same window instance")
     }
 }
-

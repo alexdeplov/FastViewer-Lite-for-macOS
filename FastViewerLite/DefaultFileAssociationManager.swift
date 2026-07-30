@@ -47,6 +47,7 @@ final class DefaultFileAssociationManager {
     ]
 
     private let previousHandlersKey = "PreviousDefaultImageHandlers"
+    private let previewBundleIdentifier = "com.apple.Preview"
     private let workspace: NSWorkspace
 
     private var bundleIdentifier: String {
@@ -140,6 +141,42 @@ final class DefaultFileAssociationManager {
             } else {
                 completion(.failure(AssociationError(
                     operation: "Could not restore the previous default app",
+                    formats: failedFormats
+                )))
+            }
+        }
+    }
+
+    /// Uses Preview when FastViewer is already the default but no previous
+    /// handlers were captured (for example, when the user changed them in Finder).
+    func restoreDefaultHandlers(completion: @escaping (Result<Void, Error>) -> Void) {
+        guard workspace.urlForApplication(
+            withBundleIdentifier: previewBundleIdentifier
+        ) != nil else {
+            completion(.failure(AssociationError(
+                operation: "Could not find the default image app",
+                formats: imageTypes.map(\.displayName)
+            )))
+            return
+        }
+
+        let snapshot = Dictionary(
+            uniqueKeysWithValues: imageTypes.map {
+                ($0.identifier, previewBundleIdentifier)
+            }
+        )
+
+        restore(
+            types: imageTypes,
+            at: 0,
+            snapshot: snapshot,
+            failedFormats: []
+        ) { failedFormats in
+            if failedFormats.isEmpty {
+                completion(.success(()))
+            } else {
+                completion(.failure(AssociationError(
+                    operation: "Could not restore the default image app",
                     formats: failedFormats
                 )))
             }

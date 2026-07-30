@@ -34,7 +34,7 @@ class KeyboardShortcutsViewController: NSViewController {
         ("Zoom Controls", [
             ("Zoom In", "⌘+ or ⌘="),
             ("Zoom Out", "⌘-"),
-            ("Reset Zoom to 100%", "⌘0"),
+            ("Actual Size (100%)", "⌘0"),
             ("Pan Image", "Click and drag")
         ]),
         ("View Options", [

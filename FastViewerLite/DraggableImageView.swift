@@ -30,6 +30,7 @@ class DraggableImageView: NSImageView {
     /// therefore still a click and advances the slideshow.
     private static let clickJitterOffset: CGFloat = 2
     private static let clickJitterTime: TimeInterval = 1
+    private static let linkHoverBorderDashPattern: [CGFloat] = [6, 4]
 
     weak var draggingDelegate: DraggingDestinationHandler?
     weak var panningDelegate: PanningHandler?
@@ -52,10 +53,13 @@ class DraggableImageView: NSImageView {
     internal var linkHoverBorderDashPattern: [NSNumber]? {
         guard isLinkHoverBorderVisible else { return nil }
         let safeScale = max(linkHoverBorderDisplayScale, 0.01)
-        return [
-            NSNumber(value: 5.0 / Double(safeScale)),
-            NSNumber(value: 3.0 / Double(safeScale))
-        ]
+        return Self.linkHoverBorderDashPattern.map {
+            NSNumber(value: Double($0 / safeScale))
+        }
+    }
+
+    internal var linkHoverBorderColor: NSColor {
+        .systemGray
     }
 
     override func awakeFromNib() {
@@ -114,28 +118,20 @@ class DraggableImageView: NSImageView {
 
         guard let borderRect = linkHoverBorderRect else { return }
         let safeScale = max(linkHoverBorderDisplayScale, 0.01)
-        let dashPattern: [CGFloat] = [5 / safeScale, 3 / safeScale]
+        let dashPattern = Self.linkHoverBorderDashPattern.map { $0 / safeScale }
         let borderPath = NSBezierPath(
             roundedRect: borderRect,
             xRadius: 3 / safeScale,
             yRadius: 3 / safeScale
         )
         borderPath.setLineDash(dashPattern, count: dashPattern.count, phase: 0)
-        borderPath.lineCapStyle = .round
+        borderPath.lineCapStyle = .butt
         borderPath.lineJoinStyle = .round
 
         NSGraphicsContext.saveGraphicsState()
-
-        // The dark dashed halo separates the blue affordance from bright or
-        // similarly colored image content without obscuring the URL itself.
-        borderPath.lineWidth = 4 / safeScale
-        NSColor(calibratedWhite: 0, alpha: 0.7).setStroke()
-        borderPath.stroke()
-
         borderPath.lineWidth = 2 / safeScale
-        NSColor.linkColor.setStroke()
+        linkHoverBorderColor.setStroke()
         borderPath.stroke()
-
         NSGraphicsContext.restoreGraphicsState()
     }
     

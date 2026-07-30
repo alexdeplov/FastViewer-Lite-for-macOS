@@ -31,6 +31,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     private var showFileSizeMenuItem: NSMenuItem?
     private var showImageResolutionMenuItem: NSMenuItem?
     private var autoResizeMenuItem: NSMenuItem?
+    private var actualSizeMenuItem: NSMenuItem?
     private var printMenuItem: NSMenuItem?
     private var showInFinderMenuItem: NSMenuItem?
     private var moveToTrashMenuItem: NSMenuItem?
@@ -239,6 +240,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
             window.makeFirstResponder(viewController)
         }
     }
+
+    func windowDidChangeBackingProperties(_ notification: Notification) {
+        guard notification.object as? NSWindow === window else { return }
+        viewController?.refreshImageScalingForBackingScaleChange()
+    }
     
     private func setupMenu() {
         let mainMenu = NSMenu()
@@ -338,6 +344,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         }
         
         viewMenu.addItem(NSMenuItem.separator())
+
+        actualSizeMenuItem = NSMenuItem(
+            title: "Actual Size",
+            action: #selector(showImageAtActualSize),
+            keyEquivalent: "0"
+        )
+        actualSizeMenuItem?.target = self
+        actualSizeMenuItem?.isEnabled = viewController?.imageView.image != nil
+        if let item = actualSizeMenuItem {
+            viewMenu.addItem(item)
+        }
         
         mainMenu.addItem(viewMenuItem)
         
@@ -424,6 +441,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // Update file action states based on whether a file/image is loaded
         let hasCurrentFile = viewController?.hasDisplayedFile ?? false
         let hasCurrentImage = viewController?.imageView.image != nil
+        actualSizeMenuItem?.isEnabled = hasCurrentImage
         printMenuItem?.isEnabled = hasCurrentImage
         showInFinderMenuItem?.isEnabled = hasCurrentFile
         moveToTrashMenuItem?.isEnabled = hasCurrentFile
@@ -546,6 +564,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                 viewController.autoResizeToImageSizeIfEnabled()
             }
         }
+    }
+
+    @objc private func showImageAtActualSize() {
+        viewController?.displayImageAtActualSize()
+        updateMenuStates()
     }
     
     /// Updates the Settings window UI to reflect current settings
@@ -719,7 +742,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         let settingsVC = SettingsViewController()
         settingsViewController = settingsVC
         
-        let windowRect = NSRect(x: 0, y: 0, width: 520, height: 385)
+        let windowRect = NSRect(origin: .zero, size: SettingsViewController.preferredContentSize)
         let styleMask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable]
         
         let newSettingsWindow = NSWindow(
@@ -946,10 +969,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // This forces the color to resolve against the current system state
         appearance.performAsCurrentDrawingAppearance {
             let backgroundColor = NSColor.windowBackgroundColor
+            let mainWindowBackgroundColor = self.viewController?.hasDisplayedFile == true
+                ? backgroundColor
+                : ViewController.emptyWindowBackgroundColor
             
             // Update main window background immediately
             if let window = self.window {
-                window.backgroundColor = backgroundColor
+                window.backgroundColor = mainWindowBackgroundColor
                 window.display() // Force a redraw
             }
             
@@ -959,8 +985,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
                 settingsWindow.display()
             }
             
-            // Update view controller background immediately
-            self.viewController?.updateBackgroundColor(backgroundColor)
+            // Update the main content using its empty/image state.
+            self.viewController?.refreshBackgroundForCurrentImage()
         }
     }
     
