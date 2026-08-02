@@ -34,6 +34,10 @@ class ImageCacheManager {
     
     /// Active prefetch work keyed by URL. Overlapping requests are retained.
     private var prefetchOperations: [String: Operation] = [:]
+    /// Files that failed a speculative static decode during this cache generation.
+    /// This primarily covers animated/multi-frame images, which are intentionally
+    /// decoded only when they become the foreground image.
+    private var unprefetchableKeys: Set<String> = []
 
     /// Last navigation window applied to the rolling queue. A display commit often
     /// repeats the request already made when navigation started; treating it as a
@@ -59,10 +63,12 @@ class ImageCacheManager {
     }
     
     /// Number of files to prefetch before current file
-    var prefetchBefore: Int = 2
+    /// Keep the rolling window small so rapid navigation does not spend CPU and
+    /// disk bandwidth decoding images the user is unlikely to reach.
+    var prefetchBefore: Int = 1
     
     /// Number of files to prefetch after current file
-    var prefetchAfter: Int = 20
+    var prefetchAfter: Int = 4
     
     /// Maximum cache size (count limit)
     private let maxCacheCount = 200
@@ -94,6 +100,29 @@ class ImageCacheManager {
     /// - Returns: Cached image if available, nil otherwise
     func getCachedImage(for url: URL, maxSize: Int = 4000) -> NSImage? {
         return imageCache.object(forKey: Self.cacheKey(for: url, maxSize: maxSize))
+    }
+
+    /// Cancels speculative work for a file that became the foreground target.
+    func cancelPrefetch(for url: URL, maxSize: Int) {
+        let key = Self.cacheKey(for: url, maxSize: maxSize) as String
+        prefetchSyncQueue.async { [weak self] in
+            guard let self else { return }
+            self.prefetchOperations.removeValue(forKey: key)?.cancel()
+        }
+    }
+
+    /// Keeps only the current navigation window in memory. This prevents a
+    /// long key-hold session from filling the cache with every image visited.
+    func trimImageCache(keeping urls: [URL], maxSize: Int) {
+        let keepKeys = Set(urls.map { Self.cacheKey(for: $0, maxSize: maxSize) })
+        cacheStateLock.lock()
+        let staleKeys = cachedImageKeys.filter { !keepKeys.contains($0) }
+        for key in staleKeys {
+            imageCache.removeObject(forKey: key)
+            cachedImageKeys.remove(key)
+            cachedImageCosts.removeValue(forKey: key)
+        }
+        cacheStateLock.unlock()
     }
     
     /// Caches an image for the given URL
@@ -206,8 +235,8 @@ class ImageCacheManager {
             fileCount: fileURLs.count,
             currentIndex: currentIndex,
             maxSize: maxSize,
-            prefetchBefore: prefetchBefore,
-            prefetchAfter: prefetchAfter
+            prefetchBefore: self.prefetchBefore,
+            prefetchAfter: self.prefetchAfter
         )
             // Calculate prefetch range
             let startIndex = max(0, currentIndex - self.prefetchBefore)
@@ -235,16 +264,20 @@ class ImageCacheManager {
                 "window=\(startIndex)...\(endIndex) queuedCandidates=\(indicesToPrefetch.count) generation=\(generation)"
             )
             
-            let desiredKeys = Set(indicesToPrefetch.map {
-                Self.cacheKey(for: fileURLs[$0], maxSize: maxSize) as String
-            })
+            let candidates = indicesToPrefetch.map { index in
+                (
+                    fileURL: fileURLs[index],
+                    key: Self.cacheKey(for: fileURLs[index], maxSize: maxSize) as String,
+                    distance: abs(index - currentIndex)
+                )
+            }
+            let desiredKeys = Set(candidates.map(\.key))
 
             if request == self.activePrefetchRequest,
-               indicesToPrefetch.allSatisfy({
-                   let fileURL = fileURLs[$0]
-                   let key = Self.cacheKey(for: fileURL, maxSize: maxSize) as String
-                   return self.prefetchOperations[key] != nil ||
-                       self.getCachedImage(for: fileURL, maxSize: maxSize) != nil
+               candidates.allSatisfy({
+                   self.prefetchOperations[$0.key] != nil ||
+                       self.unprefetchableKeys.contains($0.key) ||
+                       self.imageCache.object(forKey: $0.key as NSString) != nil
                }) {
                 PerformanceLog.shared.event(
                     "PREFETCH",
@@ -263,26 +296,23 @@ class ImageCacheManager {
             // Existing operations are the overlapping part of one rolling range,
             // not an old batch. Re-prioritize them for the new cursor so a file that
             // just became adjacent can move ahead of previously distant work.
-            for index in indicesToPrefetch {
-                let operationKey = Self.cacheKey(
-                    for: fileURLs[index],
-                    maxSize: maxSize
-                ) as String
-                if let operation = self.prefetchOperations[operationKey] {
+            for candidate in candidates {
+                if let operation = self.prefetchOperations[candidate.key] {
                     self.configurePriority(
                         of: operation,
-                        distance: abs(index - currentIndex)
+                        distance: candidate.distance
                     )
                 }
             }
 
             // Add only missing work in priority order; overlapping operations survive.
-            for index in indicesToPrefetch {
-                let fileURL = fileURLs[index]
-                let operationKey = Self.cacheKey(for: fileURL, maxSize: maxSize) as String
-                let distance = abs(index - currentIndex)
+            for candidate in candidates {
+                let fileURL = candidate.fileURL
+                let operationKey = candidate.key
+                let distance = candidate.distance
 
-                if self.getCachedImage(for: fileURL, maxSize: maxSize) != nil ||
+                if self.imageCache.object(forKey: operationKey as NSString) != nil ||
+                    self.unprefetchableKeys.contains(operationKey) ||
                     self.prefetchOperations[operationKey] != nil {
                     continue
                 }
@@ -318,18 +348,37 @@ class ImageCacheManager {
                     // Use autoreleasepool to prevent memory buildup
                     autoreleasepool {
                         // Load image using ImageLoader
-                        if let image = ImageLoader.shared.loadImage(
+                        var skippedAnimatedImage = false
+                        let image = ImageLoader.shared.loadImage(
                             from: fileURL,
                             maxSize: maxSize,
                             allowsAnimatedImage: false,
+                            onUnsupportedAnimatedImage: {
+                                skippedAnimatedImage = true
+                            },
                             shouldCancel: { operation.isCancelled || generation != self.currentGeneration() }
-                        ), !operation.isCancelled, generation == self.currentGeneration() {
+                        )
+                        if let image,
+                           !operation.isCancelled,
+                           generation == self.currentGeneration() {
                             self.cacheImage(
                                 image,
                                 for: fileURL,
                                 maxSize: maxSize,
                                 ifGeneration: generation
                             )
+                        } else if skippedAnimatedImage,
+                                  !operation.isCancelled,
+                                  generation == self.currentGeneration() {
+                            self.prefetchSyncQueue.async { [weak self, weak operation] in
+                                guard let self,
+                                      let operation,
+                                      !operation.isCancelled,
+                                      generation == self.currentGeneration() else {
+                                    return
+                                }
+                                self.unprefetchableKeys.insert(operationKey)
+                            }
                         }
                     }
 
@@ -346,6 +395,7 @@ class ImageCacheManager {
     func clearCache() {
         prefetchSyncQueue.sync {
             cancelAllPrefetchOperations()
+            unprefetchableKeys.removeAll()
         }
 
         cacheStateLock.lock()
@@ -393,8 +443,8 @@ class ImageCacheManager {
     func removeCachedImage(for url: URL) {
         let imageKeys: [NSString]
         let colorKey = Self.averageColorCacheKey(for: url)
-        cacheStateLock.lock()
         let prefix = url.standardizedFileURL.absoluteString + "|"
+        cacheStateLock.lock()
         imageKeys = cachedImageKeys.filter { ($0 as String).hasPrefix(prefix) }
         for key in imageKeys {
             imageCache.removeObject(forKey: key)
@@ -404,25 +454,22 @@ class ImageCacheManager {
         averageColorCache.removeObject(forKey: colorKey)
         cachedAverageColorKeys.remove(colorKey)
         cacheStateLock.unlock()
+        prefetchSyncQueue.async { [weak self] in
+            guard let self else { return }
+            self.unprefetchableKeys = self.unprefetchableKeys.filter {
+                !$0.hasPrefix(prefix)
+            }
+        }
     }
 
     /// Fast session key that never performs filesystem I/O on the main thread.
     /// Explicit invalidation handles files reopened at the same URL.
     static func cacheKey(for url: URL, maxSize: Int = 4000) -> NSString {
-        return "\(url.standardizedFileURL.absoluteString)|\(maxSize)|\(fileVersion(for: url))" as NSString
+        return "\(url.standardizedFileURL.absoluteString)|\(maxSize)" as NSString
     }
 
     private static func averageColorCacheKey(for url: URL) -> NSString {
-        return "\(url.standardizedFileURL.absoluteString)|color|\(fileVersion(for: url))" as NSString
-    }
-
-    private static func fileVersion(for url: URL) -> String {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
-            return "missing"
-        }
-        let size = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
-        let modified = (attributes[.modificationDate] as? Date)?.timeIntervalSinceReferenceDate ?? 0
-        return "\(size)-\(modified.bitPattern)"
+        return "\(url.standardizedFileURL.absoluteString)|color" as NSString
     }
 
     private static func decodedByteCost(of image: NSImage) -> Int {

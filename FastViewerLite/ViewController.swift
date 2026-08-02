@@ -85,6 +85,15 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     // Appearance observation
     private var appearanceObservation: NSKeyValueObservation?
     private var imageLinkMouseMonitor: Any?
+    private var offWindowScrollLocalMonitor: Any?
+    private var offWindowScrollGlobalMonitor: Any?
+    private var offWindowScrollScreenPoint: NSPoint?
+    private var appResignActiveObserver: NSObjectProtocol?
+    private var windowResignKeyObserver: NSObjectProtocol?
+    internal var isOffWindowScrollCaptureActive: Bool {
+        offWindowScrollScreenPoint != nil &&
+        (offWindowScrollLocalMonitor != nil || offWindowScrollGlobalMonitor != nil)
+    }
 
     private struct DragPreparationState {
         let fileURL: URL
@@ -117,6 +126,15 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     private var imageLoadGeneration: Int = 0
     private var currentImageLoadOperation: Operation?
     private var imageQualityLoadOperation: Operation?
+    private var autoResizeWorkItem: DispatchWorkItem?
+    private var rapidNavigationResetWorkItem: DispatchWorkItem?
+    private var isRapidNavigation = false
+    private var lastNavigationRequestTime: TimeInterval = 0
+    private var rapidNavigationDecodeMaxSize: Int?
+    private var rapidNavigationTargetIndex: Int?
+    private var rightKeyTraceActive = false
+    private var rightKeyTraceGeneration = 0
+    private var rightKeyTraceStartedAt: TimeInterval = 0
     private var imageLinkDetectionDelay: DispatchWorkItem?
     private var imageLinkDetectionOperation: Operation?
     private var detectedImageLinks: [DetectedImageLink] = []
@@ -150,6 +168,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     private var lastScrollNavigationTime: TimeInterval = 0
     private let preciseScrollNavigationThreshold: CGFloat = 30
     private let scrollNavigationInterval: TimeInterval = 0.18
+    private let offWindowScrollPointerTolerance: CGFloat = 2
 
     private enum CursorType {
         case `default`
@@ -200,6 +219,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         setupAppearanceObserver()
         setupDragAndDrop()
         setupImageLinkMouseMonitor()
+        setupOffWindowScrollCancellationObservers()
     }
 
     override func viewWillAppear() {
@@ -214,8 +234,15 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
 
     deinit {
         cancelImageLinkDetection()
+        stopOffWindowScrollCapture()
         if let imageLinkMouseMonitor {
             NSEvent.removeMonitor(imageLinkMouseMonitor)
+        }
+        if let appResignActiveObserver {
+            NotificationCenter.default.removeObserver(appResignActiveObserver)
+        }
+        if let windowResignKeyObserver {
+            NotificationCenter.default.removeObserver(windowResignKeyObserver)
         }
         appearanceObservation?.invalidate()
     }
@@ -241,6 +268,27 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             // Consuming the event prevents the same click from also navigating or
             // starting a pan gesture after the browser receives the URL.
             return nil
+        }
+    }
+
+    private func setupOffWindowScrollCancellationObservers() {
+        appResignActiveObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.stopOffWindowScrollCapture()
+        }
+        windowResignKeyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let self,
+                  notification.object as? NSWindow === self.view.window else {
+                return
+            }
+            self.stopOffWindowScrollCapture()
         }
     }
 
@@ -373,10 +421,74 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         case 123: // Left arrow key
             navigateToPrevious()
         case 124: // Right arrow key
+            startRightKeyTraceIfNeeded()
             navigateToNext()
         default:
             super.keyDown(with: event)
         }
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if event.keyCode == 124 {
+            stopRightKeyTrace()
+            return
+        }
+        super.keyUp(with: event)
+    }
+
+    private func startRightKeyTraceIfNeeded() {
+        guard !rightKeyTraceActive else { return }
+        rightKeyTraceActive = true
+        rightKeyTraceGeneration += 1
+        rightKeyTraceStartedAt = ProcessInfo.processInfo.systemUptime
+        let generation = rightKeyTraceGeneration
+        PerformanceLog.shared.event(
+            "KEYTRACE",
+            "right-start index=\(fileListManager.currentIndex) displayed=\(displayedFileURL?.lastPathComponent ?? "-")"
+        )
+        scheduleRightKeyTraceSample(generation: generation)
+    }
+
+    private func scheduleRightKeyTraceSample(generation: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self,
+                  self.rightKeyTraceActive,
+                  self.rightKeyTraceGeneration == generation else { return }
+
+            let elapsed = ProcessInfo.processInfo.systemUptime - self.rightKeyTraceStartedAt
+            let imageSize = self.imageView.image?.size ?? .zero
+            PerformanceLog.shared.event(
+                "KEYTRACE",
+                String(
+                    format: "right-sample elapsed=%.2f index=%d pending=%@ displayed=%@ rapid=%d image=%.0fx%.0f",
+                    elapsed,
+                    self.fileListManager.currentIndex,
+                    self.pendingImageURL?.lastPathComponent ?? "-",
+                    self.displayedFileURL?.lastPathComponent ?? "-",
+                    self.isRapidNavigation ? 1 : 0,
+                    imageSize.width,
+                    imageSize.height
+                )
+            )
+            self.scheduleRightKeyTraceSample(generation: generation)
+        }
+    }
+
+    private func stopRightKeyTrace() {
+        guard rightKeyTraceActive else { return }
+        let elapsed = ProcessInfo.processInfo.systemUptime - rightKeyTraceStartedAt
+        rightKeyTraceActive = false
+        rightKeyTraceGeneration += 1
+        PerformanceLog.shared.event(
+            "KEYTRACE",
+            String(
+                format: "right-stop elapsed=%.2f index=%d pending=%@ displayed=%@",
+                elapsed,
+                fileListManager.currentIndex,
+                pendingImageURL?.lastPathComponent ?? "-",
+                displayedFileURL?.lastPathComponent ?? "-"
+            )
+        )
     }
 
     // MARK: - Window Resizing
@@ -384,6 +496,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     /// Restores the window to its initial state (no file loaded)
     /// Preserves undo state so Cmd+Z can restore the file if it was moved to trash
     internal func restoreInitialState() {
+        stopOffWindowScrollCapture()
         clearDragPreparation()
         cancelPendingImageTransition()
         cancelImageLinkDetection()
@@ -550,21 +663,19 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             return
         }
 
-        // Get pixel dimensions from CGImage
-        let pixelWidth = CGFloat(cgImage.width)
-        let pixelHeight = CGFloat(cgImage.height)
+        // Prefer the original file dimensions. The displayed CGImage may be a
+        // downsampled thumbnail and must not determine the window size.
+        let originalSize = displayedFileURL.map {
+            cachedOriginalPixelSize(for: $0, fallbackImage: image)
+        } ?? NSSize(width: cgImage.width, height: cgImage.height)
 
-        // Get the screen's backing scale factor for the window's screen
         guard let screen = window.screen ?? NSScreen.main else { return }
-        let scaleFactor = screen.backingScaleFactor
-
-        // Convert pixels to points for 100% scale display
-        // On Retina (2x): 1 point = 2 pixels, so 2000 pixels = 1000 points
-        // On non-Retina (1x): 1 point = 1 pixel, so 2000 pixels = 2000 points
-        // Formula: points = pixels / scaleFactor
+        // Use the image dimensions as logical window points. Dividing by the
+        // backing scale factor would make an 800x600 image become 400x300 on
+        // a Retina display.
         var imageSizeInPoints = NSSize(
-            width: pixelWidth / scaleFactor,
-            height: pixelHeight / scaleFactor
+            width: originalSize.width,
+            height: originalSize.height
         )
 
         // Get current content rect to calculate title bar height
@@ -619,8 +730,9 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
 
         guard let screen = window.screen ?? NSScreen.main else { return }
         let newOrigin: NSPoint
+        let resizeAnchor = SettingsManager.shared.windowResizeAnchor
 
-        switch SettingsManager.shared.windowResizeAnchor {
+        switch resizeAnchor {
         case .center:
             let screenFrame = screen.visibleFrame
             newOrigin = NSPoint(
@@ -636,13 +748,28 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         }
 
         var newFrame = NSRect(origin: newOrigin, size: newWindowFrame.size)
-        if let screenPoint {
+        if let screenPoint,
+           resizeAnchor != .topLeft {
             newFrame = frameKeepingScrollPointerVisible(
                 newFrame,
                 screenPoint: screenPoint,
                 window: window,
                 screen: screen
             )
+        }
+        updateOffWindowScrollCapture(
+            for: newFrame,
+            screenPoint: screenPoint,
+            resizeAnchor: resizeAnchor,
+            window: window
+        )
+
+        // Avoid triggering AppKit layout when the calculated size is already
+        // current (common when consecutive images share the same dimensions).
+        if abs(window.frame.size.width - newFrame.size.width) < 0.5,
+           abs(window.frame.size.height - newFrame.size.height) < 0.5 {
+            completion?()
+            return
         }
 
         if animated {
@@ -717,6 +844,90 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             visibleFrame.maxY - adjustedFrame.height
         )
         return adjustedFrame
+    }
+
+    /// Continues a wheel-navigation session when a top-left resize makes the
+    /// window smaller than the stationary pointer position. The capture ends as
+    /// soon as the pointer moves or FastViewer is no longer the active key window.
+    private func updateOffWindowScrollCapture(
+        for frame: NSRect,
+        screenPoint: NSPoint?,
+        resizeAnchor: WindowResizeAnchor,
+        window: NSWindow
+    ) {
+        guard resizeAnchor == .topLeft,
+              SettingsManager.shared.autoResizeToImageSize,
+              let screenPoint,
+              !window.contentRect(forFrameRect: frame).contains(screenPoint) else {
+            stopOffWindowScrollCapture()
+            return
+        }
+
+        offWindowScrollScreenPoint = screenPoint
+        guard offWindowScrollLocalMonitor == nil,
+              offWindowScrollGlobalMonitor == nil else {
+            return
+        }
+
+        // A global monitor excludes events sent to this process, so pair it with
+        // a local monitor for the case where another FastViewer window is under
+        // the stationary pointer.
+        offWindowScrollLocalMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: .scrollWheel
+        ) { [weak self] event in
+            guard let self,
+                  event.window !== self.view.window,
+                  self.handleCapturedOffWindowScroll(event) else {
+                return event
+            }
+            return nil
+        }
+
+        offWindowScrollGlobalMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: .scrollWheel
+        ) { [weak self] event in
+            self?.handleCapturedOffWindowScroll(event)
+        }
+    }
+
+    private func stopOffWindowScrollCapture() {
+        offWindowScrollScreenPoint = nil
+        if let offWindowScrollLocalMonitor {
+            NSEvent.removeMonitor(offWindowScrollLocalMonitor)
+            self.offWindowScrollLocalMonitor = nil
+        }
+        if let offWindowScrollGlobalMonitor {
+            NSEvent.removeMonitor(offWindowScrollGlobalMonitor)
+            self.offWindowScrollGlobalMonitor = nil
+        }
+    }
+
+    @discardableResult
+    internal func handleCapturedOffWindowScroll(
+        _ event: NSEvent,
+        currentPointer: NSPoint = NSEvent.mouseLocation,
+        requireActiveWindow: Bool = true
+    ) -> Bool {
+        guard let screenPoint = offWindowScrollScreenPoint,
+              let window = view.window,
+              !requireActiveWindow || (NSApp.isActive && window.isKeyWindow && window.isVisible),
+              SettingsManager.shared.autoResizeToImageSize,
+              SettingsManager.shared.windowResizeAnchor == .topLeft,
+              imageView.image != nil,
+              !isPanningAvailable() else {
+            stopOffWindowScrollCapture()
+            return false
+        }
+
+        guard abs(currentPointer.x - screenPoint.x) <= offWindowScrollPointerTolerance,
+              abs(currentPointer.y - screenPoint.y) <= offWindowScrollPointerTolerance,
+              !window.contentRect(forFrameRect: window.frame).contains(currentPointer) else {
+            stopOffWindowScrollCapture()
+            return false
+        }
+
+        processScroll(event, screenPoint: screenPoint)
+        return true
     }
 
     /// Sets up the transparency checker pattern background view
@@ -945,6 +1156,13 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         currentImageLoadOperation = nil
         imageQualityLoadOperation?.cancel()
         imageQualityLoadOperation = nil
+        autoResizeWorkItem?.cancel()
+        autoResizeWorkItem = nil
+        rapidNavigationResetWorkItem?.cancel()
+        rapidNavigationResetWorkItem = nil
+        isRapidNavigation = false
+        rapidNavigationDecodeMaxSize = nil
+        rapidNavigationTargetIndex = nil
         pendingImageURL = nil
         hideLoadingOverlay()
     }
@@ -966,18 +1184,28 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
 
     /// Starts prefetching images around the current file position
     private func startPrefetching(at index: Int? = nil) {
+        guard !isRapidNavigation else { return }
         let fileURLs = fileListManager.fileURLs
         let currentIndex = index ?? fileListManager.currentIndex
+        let maxSize = preferredDecodeMaxSize()
+        let firstIndex = max(0, currentIndex - ImageCacheManager.shared.prefetchBefore)
+        let lastIndex = min(fileURLs.count - 1, currentIndex + ImageCacheManager.shared.prefetchAfter)
+        if !fileURLs.isEmpty, firstIndex <= lastIndex {
+            ImageCacheManager.shared.trimImageCache(
+                keeping: Array(fileURLs[firstIndex...lastIndex]),
+                maxSize: maxSize
+            )
+        }
         PerformanceLog.shared.event(
             "PREFETCH",
-            "request index=\(currentIndex) count=\(fileURLs.count) maxSize=\(preferredDecodeMaxSize())"
+            "request index=\(currentIndex) count=\(fileURLs.count) maxSize=\(maxSize)"
         )
 
         // Prefetch images around current position
         ImageCacheManager.shared.prefetchImages(
             fileURLs: fileURLs,
             currentIndex: currentIndex,
-            maxSize: preferredDecodeMaxSize()
+            maxSize: maxSize
         )
     }
 
@@ -992,6 +1220,37 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
 
     /// Displays an image from file URL without reloading the file list
     /// - Parameter fileURL: URL to the image file
+    private func markRapidNavigation() {
+        let now = ProcessInfo.processInfo.systemUptime
+        let enteringRapidNavigation = now - lastNavigationRequestTime < 0.35
+        if enteringRapidNavigation, !isRapidNavigation {
+            // Keep one stable cache key while the user is scrubbing. Window
+            // resizing must not cause every image to be decoded again at a new
+            // maxSize.
+            // Fast-scroll needs a lightweight preview, not window-resolution
+            // decoding. Full quality is requested after the key is released.
+            rapidNavigationDecodeMaxSize = min(1024, preferredDecodeMaxSize())
+            ImageCacheManager.shared.cancelPrefetching()
+        }
+        isRapidNavigation = enteringRapidNavigation
+        lastNavigationRequestTime = now
+
+        rapidNavigationResetWorkItem?.cancel()
+        let reset = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.isRapidNavigation = false
+            self.rapidNavigationDecodeMaxSize = nil
+            self.rapidNavigationTargetIndex = nil
+            if let fileURL = self.displayedFileURL {
+                self.updateFileInfo(for: fileURL)
+                self.requestSharperImageIfNeeded()
+            }
+            self.startPrefetching()
+        }
+        rapidNavigationResetWorkItem = reset
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: reset)
+    }
+
     private func displayImage(
         from fileURL: URL,
         fileListCommit: FileListCommit = .keepCurrent,
@@ -1015,9 +1274,22 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         imageQualityLoadOperation?.cancel()
         imageQualityLoadOperation = nil
         pendingImageURL = nil
+        if case .currentIndex = fileListCommit {
+            markRapidNavigation()
+        }
         imageLoadGeneration += 1
         let generation = imageLoadGeneration
-        let decodeMaxSize = preferredDecodeMaxSize()
+        var decodeMaxSize = preferredDecodeMaxSize()
+        if SettingsManager.shared.autoResizeToImageSize {
+            let originalSize = cachedOriginalPixelSize(
+                for: fileURL,
+                fallbackImage: imageView.image ?? NSImage(size: .zero)
+            )
+            decodeMaxSize = min(
+                12_000,
+                max(decodeMaxSize, Int(max(originalSize.width, originalSize.height).rounded(.up)))
+            )
+        }
         let requestStartedAt = ProcessInfo.processInfo.systemUptime
 
         // Move the rolling prefetch cursor when navigation is requested, not after
@@ -1044,6 +1316,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             return
         }
 
+        ImageCacheManager.shared.cancelPrefetch(for: fileURL, maxSize: decodeMaxSize)
         showLoadingOverlay()
         pendingImageURL = fileURL
         PerformanceLog.shared.event(
@@ -1099,11 +1372,13 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         }
 
         applyFileListCommit(fileListCommit)
+        var committedPreparedFileList = false
         if let prepared = preparedFileListForPendingDisplay,
            prepared.fileURL == fileURL,
            prepared.generation == fileListPreparationGeneration {
             fileListManager.applyPreparedFileList(prepared.prepared)
             preparedFileListForPendingDisplay = nil
+            committedPreparedFileList = true
         }
         displayedFileURL = fileURL
         cancelImageLinkDetection()
@@ -1130,13 +1405,29 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         )
         scheduleImageLinkDetection(for: fileURL, image: image)
 
-        if !fileListManager.fileURLs.isEmpty {
+        // Navigation already advanced the rolling window when the request began.
+        // Initial opens and prepared drops still need their first prefetch here.
+        let prefetchStartedForRequest: Bool
+        if case .currentIndex = fileListCommit {
+            prefetchStartedForRequest = true
+        } else {
+            prefetchStartedForRequest = false
+        }
+        if !fileListManager.fileURLs.isEmpty &&
+            (!prefetchStartedForRequest || committedPreparedFileList) {
             startPrefetching()
         }
+
+        pumpRapidNavigationIfNeeded()
 
     }
 
     private func preferredDecodeMaxSize(zoomScale: CGFloat = 1) -> Int {
+        if isRapidNavigation,
+           zoomScale == 1,
+           let rapidNavigationDecodeMaxSize {
+            return rapidNavigationDecodeMaxSize
+        }
         let scale = view.window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         let longestSide = max(imageView?.bounds.width ?? view.bounds.width,
                               imageView?.bounds.height ?? view.bounds.height)
@@ -1147,13 +1438,19 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     /// Replaces the display with a larger decode only when zoom/window size needs it.
     /// The current pixels remain visible while the quality upgrade runs.
     private func requestSharperImageIfNeeded() {
+        guard !isRapidNavigation else { return }
         guard let fileURL = displayedFileURL,
               let image = imageView.image,
               let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             return
         }
 
-        let targetSize = preferredDecodeMaxSize(zoomScale: getCurrentZoomScale())
+        let preferredSize = preferredDecodeMaxSize(zoomScale: getCurrentZoomScale())
+        let originalSize = cachedOriginalPixelSize(for: fileURL, fallbackImage: image)
+        let targetSize = min(
+            12_000,
+            max(preferredSize, Int(max(originalSize.width, originalSize.height).rounded(.up)))
+        )
         guard max(cgImage.width, cgImage.height) < targetSize else {
             return
         }
@@ -1226,7 +1523,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
 
         updateFileNameDisplay(for: fileURL)
 
-        if SettingsManager.shared.showFileInfoPill {
+        if SettingsManager.shared.showFileInfoPill, !isRapidNavigation {
             updateFileInfo(for: fileURL)
         } else {
             fileInfoPill?.isHidden = true
@@ -1244,6 +1541,15 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         for fileURL: URL,
         keepingScrollPointerAt screenPoint: NSPoint?
     ) {
+        let shouldAutoResize = SettingsManager.shared.autoResizeToImageSize
+        if shouldAutoResize {
+            resizeWindowToImageSizeForFile(
+                fileURL,
+                fallbackImage: image,
+                keepingScreenPointVisible: screenPoint
+            )
+        }
+
         // Set image without changing its size property to prevent window resizing
         // Adjust scaling based on image size vs view size
         // Note: Zoom scale will be applied in updateImageScaling if stored
@@ -1254,22 +1560,61 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         instructionLabel?.isHidden = true
 
         // Auto-resize window to image size if setting is enabled
-        if SettingsManager.shared.autoResizeToImageSize {
-            let currentFileURL = fileURL
-            resizeWindowToImageSize(
-                animated: false,
-                keepingScreenPointVisible: screenPoint
-            ) {
-                self.resetZoomForFile(currentFileURL)
-                self.updateImageScaling(for: image)
-                self.refreshBackgroundForCurrentImage()
+        if shouldAutoResize {
+            autoResizeWorkItem?.cancel()
+            autoResizeWorkItem = nil
+            resetZoomForFile(fileURL)
+            if !isRapidNavigation {
+                updateImageScaling(for: image)
+                requestSharperImageIfNeeded()
             }
+            refreshBackgroundForCurrentImage()
         } else {
             updateImageScaling(for: image)
             refreshBackgroundForCurrentImage()
         }
 
         updateTransparencyCheckerVisibility()
+    }
+
+    private func resizeWindowToImageSizeForFile(
+        _ fileURL: URL,
+        fallbackImage image: NSImage,
+        keepingScreenPointVisible screenPoint: NSPoint?
+    ) {
+        guard let window = view.window,
+              let screen = window.screen ?? NSScreen.main else { return }
+
+        var imageSizeInPoints = cachedOriginalPixelSize(for: fileURL, fallbackImage: image)
+        guard imageSizeInPoints.width > 0, imageSizeInPoints.height > 0 else { return }
+
+        let currentContentRect = window.contentRect(forFrameRect: window.frame)
+        let titleBarHeight = window.frame.height - currentContentRect.height
+        let screenFrame = screen.visibleFrame
+        let maxContentWidth = screenFrame.width
+        let maxContentHeight = screenFrame.height - titleBarHeight
+        if imageSizeInPoints.width > maxContentWidth || imageSizeInPoints.height > maxContentHeight {
+            let scale = min(
+                maxContentWidth / imageSizeInPoints.width,
+                maxContentHeight / imageSizeInPoints.height
+            )
+            imageSizeInPoints.width *= scale
+            imageSizeInPoints.height *= scale
+        }
+
+        resizeWindow(
+            to: NSRect(
+                origin: .zero,
+                size: NSSize(
+                    width: imageSizeInPoints.width,
+                    height: imageSizeInPoints.height + titleBarHeight
+                )
+            ),
+            animated: false,
+            image: image,
+            keepingScreenPointVisible: screenPoint,
+            completion: {}
+        )
     }
 
     /// Waits until the image has remained unchanged for two seconds, then performs
@@ -1331,9 +1676,43 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         }
 
         let nextIndex = currentIndex < fileListManager.fileURLs.count - 1 ? currentIndex + 1 : 0
+
+        if isRapidNavigation {
+            // A slow decode must not end rapid mode while the key is still
+            // held. Auto-repeat events can arrive while the current image is
+            // pending, so refresh the quiet-period timer here as well as when
+            // a new foreground decode is started.
+            markRapidNavigation()
+            rapidNavigationTargetIndex = nextIndex
+            // Keep only one foreground decode in flight. Once it commits, the
+            // pump below jumps directly to the latest requested target.
+            if currentImageLoadOperation != nil || pendingImageURL != nil {
+                return
+            }
+        }
+
         displayImage(
             from: fileListManager.fileURLs[nextIndex],
             fileListCommit: .currentIndex(nextIndex)
+        )
+    }
+
+    private func pumpRapidNavigationIfNeeded() {
+        guard isRapidNavigation,
+              currentImageLoadOperation == nil,
+              pendingImageURL == nil,
+              let targetIndex = rapidNavigationTargetIndex,
+              let currentIndex = displayedFileURL.flatMap({ fileListManager.fileURLs.firstIndex(of: $0) }),
+              targetIndex != currentIndex,
+              targetIndex >= 0,
+              targetIndex < fileListManager.fileURLs.count else {
+            return
+        }
+
+        rapidNavigationTargetIndex = nil
+        displayImage(
+            from: fileListManager.fileURLs[targetIndex],
+            fileListCommit: .currentIndex(targetIndex)
         )
     }
 
@@ -1629,7 +2008,8 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         }
     }
 
-    /// Updates the window title. The file name is always visible.
+    /// Updates the window title. The file name and its position in the active
+    /// folder are always visible.
     /// - Parameter fileURL: URL to the image file (optional - if nil, shows just "FastViewer")
     private func updateWindowTitle(with fileURL: URL?) {
         guard let fileURL = fileURL else {
@@ -1638,7 +2018,17 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         }
 
         let filename = fileURL.lastPathComponent
-        view.window?.title = "FastViewer Lite — \(filename)"
+        let fileCount = fileListManager.fileURLs.count
+        let filePosition = fileListManager.fileURLs.firstIndex(of: fileURL).map { $0 + 1 }
+        let positionText: String
+
+        if let filePosition, fileCount > 0 {
+            positionText = " – \(filePosition)/\(fileCount)"
+        } else {
+            positionText = ""
+        }
+
+        view.window?.title = "FastViewer Lite — \(filename)\(positionText)"
     }
 
     /// Updates the title and keeps the obsolete corner pill hidden.
@@ -1781,6 +2171,15 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             maxZoom,
             actualSizeZoomScale(for: image, fileURL: fileURL) * maxZoom
         )
+    }
+
+    private func cachedOriginalPixelSize(for fileURL: URL, fallbackImage image: NSImage) -> NSSize {
+        if let cachedSize = originalImagePixelSizes[fileURL] {
+            return cachedSize
+        }
+        let size = readOriginalPixelSize(for: fileURL, fallbackImage: image)
+        originalImagePixelSizes[fileURL] = size
+        return size
     }
 
     private func readOriginalPixelSize(for fileURL: URL, fallbackImage image: NSImage) -> NSSize {
@@ -1989,14 +2388,14 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             return nil
         }
 
-        let scaleFactor = screen.backingScaleFactor
-        let pixelWidth = CGFloat(cgImage.width)
-        let pixelHeight = CGFloat(cgImage.height)
+        let originalSize = displayedFileURL.map {
+            cachedOriginalPixelSize(for: $0, fallbackImage: image)
+        } ?? NSSize(width: cgImage.width, height: cgImage.height)
 
-        // Convert pixels to points for 100% scale
+        // Use image dimensions as logical points; do not divide by Retina scale.
         var imageSizeInPoints = NSSize(
-            width: pixelWidth / scaleFactor,
-            height: pixelHeight / scaleFactor
+            width: originalSize.width,
+            height: originalSize.height
         )
 
         // Get title bar height
@@ -2237,7 +2636,6 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         // Note: When window size changes, we need to check if there's a stored zoom for the new size
         if let image = imageView.image {
             updateImageScaling(for: image)
-            requestSharperImageIfNeeded()
         }
         // Update pill visibility based on window size and current file
         updatePillVisibilityForWindowSize()
@@ -3278,6 +3676,13 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
 
     /// Handles mouse-wheel navigation and trackpad panning/navigation.
     func handleScroll(with event: NSEvent) {
+        let screenPoint = event.window?.convertPoint(
+            toScreen: event.locationInWindow
+        ) ?? event.locationInWindow
+        processScroll(event, screenPoint: screenPoint)
+    }
+
+    private func processScroll(_ event: NSEvent, screenPoint: NSPoint) {
         guard imageView.image != nil else { return }
         PerformanceLog.shared.event(
             "SCROLL",
@@ -3299,7 +3704,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             return
         }
 
-        if navigateWithScroll(event) {
+        if navigateWithScroll(event, screenPoint: screenPoint) {
             // Draw the cache hit now, but let AppKit commit the backing layer at the
             // normal event-loop boundary. Forcing a Core Animation flush from every
             // wheel callback can disturb the current event-tracking sequence.
@@ -3322,7 +3727,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         applyZoomTransform(scale: getCurrentZoomScale())
     }
 
-    private func navigateWithScroll(_ event: NSEvent) -> Bool {
+    private func navigateWithScroll(_ event: NSEvent, screenPoint: NSPoint) -> Bool {
         let verticalDelta = event.scrollingDeltaY
         guard abs(verticalDelta) > abs(event.scrollingDeltaX), verticalDelta != 0 else {
             return false
@@ -3357,9 +3762,6 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
                 "NAV",
                 "next accumulated=\(accumulatedNavigationScroll) steps=\(steps)"
             )
-            let screenPoint = event.window?.convertPoint(
-                toScreen: event.locationInWindow
-            ) ?? event.locationInWindow
             navigateWithDiscreteScroll(step: steps, keepingPointerAt: screenPoint)
         } else {
             let steps = 1
@@ -3367,9 +3769,6 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
                 "NAV",
                 "previous accumulated=\(accumulatedNavigationScroll) steps=\(steps)"
             )
-            let screenPoint = event.window?.convertPoint(
-                toScreen: event.locationInWindow
-            ) ?? event.locationInWindow
             navigateWithDiscreteScroll(step: -steps, keepingPointerAt: screenPoint)
         }
 

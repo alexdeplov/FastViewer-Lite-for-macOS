@@ -52,8 +52,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     }
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
-        PerformanceLog.shared.start()
-        PerformanceLog.shared.event("APP", "didFinishLaunching")
+//        PerformanceLog.shared.start()
+//        PerformanceLog.shared.event("APP", "didFinishLaunching")
         // Set activation policy to ensure app appears in dock
         NSApp.setActivationPolicy(.regular)
         
@@ -1006,6 +1006,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
 final class PerformanceLog {
     static let shared = PerformanceLog()
 
+    private let isEnabled: Bool = {
+        #if DEBUG
+        return true
+        #else
+        return ProcessInfo.processInfo.environment["FASTVIEWER_PERFORMANCE_LOG"] == "1"
+        #endif
+    }()
     private let queue = DispatchQueue(label: "com.fastviewer.performance-log", qos: .utility)
     private var fileHandle: FileHandle?
     private var watchdog: DispatchSourceTimer?
@@ -1015,6 +1022,7 @@ final class PerformanceLog {
     private init() {}
 
     func start() {
+        guard isEnabled else { return }
         queue.sync {
             guard fileHandle == nil else { return }
             let directory = FileManager.default.urls(
@@ -1037,6 +1045,7 @@ final class PerformanceLog {
     }
 
     func stop() {
+        guard isEnabled else { return }
         watchdog?.cancel()
         watchdog = nil
         queue.sync {
@@ -1047,13 +1056,15 @@ final class PerformanceLog {
         }
     }
 
-    func event(_ category: String, _ message: String) {
+    func event(_ category: String, _ message: @autoclosure () -> String) {
+        guard isEnabled else { return }
         let timestamp = ProcessInfo.processInfo.systemUptime - startedAt
         let thread = Thread.isMainThread ? "main" : "bg"
+        let resolvedMessage = message()
         queue.async { [weak self] in
             guard let self else { return }
             self.writeLocked(
-                String(format: "%.3f [%@] [%@] %@\n", timestamp, category, thread, message)
+                String(format: "%.3f [%@] [%@] %@\n", timestamp, category, thread, resolvedMessage)
             )
         }
     }

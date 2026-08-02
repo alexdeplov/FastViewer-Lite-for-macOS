@@ -70,6 +70,7 @@ class ImageLoader {
         from fileURL: URL,
         maxSize: Int = 4000,
         allowsAnimatedImage: Bool = true,
+        onUnsupportedAnimatedImage: () -> Void = {},
         shouldCancel: () -> Bool = { false }
     ) -> NSImage? {
         guard !shouldCancel() else { return nil }
@@ -112,6 +113,7 @@ class ImageLoader {
             from: fileURL,
             maxSize: maxSize,
             allowsAnimatedImage: allowsAnimatedImage,
+            onUnsupportedAnimatedImage: onUnsupportedAnimatedImage,
             shouldCancel: shouldCancel
         )
 
@@ -136,6 +138,7 @@ class ImageLoader {
         from fileURL: URL,
         maxSize: Int,
         allowsAnimatedImage: Bool,
+        onUnsupportedAnimatedImage: () -> Void,
         shouldCancel: () -> Bool
     ) -> NSImage? {
         // Try to access security-scoped resource if needed (for sandboxed apps)
@@ -161,6 +164,7 @@ class ImageLoader {
             // every frame. Static images stay on the URL-backed fast path.
             if CGImageSourceGetCount(source) > 1 {
                 guard allowsAnimatedImage else {
+                    onUnsupportedAnimatedImage()
                     return nil
                 }
                 guard !shouldCancel(),
@@ -232,7 +236,11 @@ class ImageLoader {
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxSize
+            kCGImageSourceThumbnailMaxPixelSize: maxSize,
+            // Force decode while the loader is on its background queue. This
+            // avoids deferring expensive ImageIO work until the image is drawn.
+            kCGImageSourceShouldCache: true,
+            kCGImageSourceShouldCacheImmediately: true
         ]
 
         guard !shouldCancel(),

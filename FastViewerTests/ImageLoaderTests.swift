@@ -7,6 +7,7 @@
 
 import XCTest
 import AppKit
+import ImageIO
 @testable import FastViewer_Lite
 
 final class ImageLoaderTests: XCTestCase {
@@ -63,6 +64,66 @@ final class ImageLoaderTests: XCTestCase {
         }
         
         wait(for: [expectation], timeout: 2.0)
+    }
+
+    func testStaticPrefetchReportsAnimatedImageWithoutDecodingIt() throws {
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("gif")
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data,
+            "com.compuserve.gif" as CFString,
+            2,
+            nil
+        ) else {
+            XCTFail("Could not create GIF destination")
+            return
+        }
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let pixels: [[UInt8]] = [
+            [255, 0, 0, 255],
+            [0, 0, 255, 255]
+        ]
+        for pixel in pixels {
+            guard let provider = CGDataProvider(
+                data: Data(pixel) as CFData
+            ), let image = CGImage(
+                width: 1,
+                height: 1,
+                bitsPerComponent: 8,
+                bitsPerPixel: 32,
+                bytesPerRow: 4,
+                space: colorSpace,
+                bitmapInfo: CGBitmapInfo(
+                    rawValue: CGImageAlphaInfo.last.rawValue
+                ),
+                provider: provider,
+                decode: nil,
+                shouldInterpolate: false,
+                intent: .defaultIntent
+            ) else {
+                XCTFail("Could not create GIF frame")
+                return
+            }
+            CGImageDestinationAddImage(destination, image, nil)
+        }
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        try (data as Data).write(to: fileURL)
+
+        var reportedAnimatedImage = false
+        let image = imageLoader.loadImage(
+            from: fileURL,
+            allowsAnimatedImage: false,
+            onUnsupportedAnimatedImage: {
+                reportedAnimatedImage = true
+            }
+        )
+
+        XCTAssertNil(image)
+        XCTAssertTrue(reportedAnimatedImage)
     }
     
     // Note: To test with actual JPEG files, you would need to add test images to the test bundle
@@ -197,8 +258,6 @@ final class ImageLoaderTests: XCTestCase {
         }
     }
 }
-
-
 
 
 

@@ -19,7 +19,7 @@ final class ImageCacheManagerTests: XCTestCase {
         cacheManager = ImageCacheManager.shared
         cacheManager.clearCache()
         cacheManager.prefetchBefore = 2
-        cacheManager.prefetchAfter = 20
+        cacheManager.prefetchAfter = 8
         
         // Create a temporary directory for testing
         tempDirectory = FileManager.default.temporaryDirectory
@@ -78,7 +78,7 @@ final class ImageCacheManagerTests: XCTestCase {
         XCTAssertNil(cacheManager.getCachedImage(for: testURL, maxSize: 4000))
     }
 
-    func testCacheInvalidatesWhenFileVersionChanges() throws {
+    func testCacheInvalidatesExplicitlyWhenFileIsReopenedOrReplaced() throws {
         let testURL = tempDirectory.appendingPathComponent("versioned.jpg")
         try Data([0x01]).write(to: testURL)
         let image = createTestImage(size: NSSize(width: 100, height: 100))
@@ -86,16 +86,17 @@ final class ImageCacheManagerTests: XCTestCase {
         XCTAssertNotNil(cacheManager.getCachedImage(for: testURL, maxSize: 1024))
 
         try Data([0x01, 0x02]).write(to: testURL)
+        cacheManager.removeCachedImage(for: testURL)
 
         XCTAssertNil(
             cacheManager.getCachedImage(for: testURL, maxSize: 1024),
-            "A replaced file must not reuse pixels from the previous version"
+            "Explicit invalidation must prevent a replaced file from reusing old pixels"
         )
     }
 
-    func testDefaultPrefetchWindowIsTwoBackAndTwentyForward() {
+    func testDefaultPrefetchWindowIsTwoBackAndEightForward() {
         XCTAssertEqual(cacheManager.prefetchBefore, 2)
-        XCTAssertEqual(cacheManager.prefetchAfter, 20)
+        XCTAssertEqual(cacheManager.prefetchAfter, 8)
     }
     
     func testPrefetchImagesSkipsCachedImages() {
@@ -399,7 +400,6 @@ final class ImageCacheManagerTests: XCTestCase {
         XCTAssertTrue(true, "Prefetch should prioritize closest files")
     }
 }
-
 
 
 

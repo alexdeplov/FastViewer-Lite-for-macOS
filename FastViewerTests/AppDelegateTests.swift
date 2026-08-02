@@ -162,13 +162,13 @@ final class AppDelegateTests: XCTestCase {
     func testApplicationShouldTerminateAfterLastWindowClosed() {
         // Closing the last window via its red close button should quit the app.
         let shouldTerminate = appDelegate.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared)
-        
+
         XCTAssertTrue(
             shouldTerminate,
             "App should terminate when its last window closes"
         )
     }
-    
+
     func testCloseWindowTerminatesApp() {
         // Test that closing the last window requests app termination.
         appDelegate.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))

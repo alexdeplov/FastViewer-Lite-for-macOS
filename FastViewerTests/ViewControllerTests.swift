@@ -1203,7 +1203,7 @@ final class ViewControllerTests: XCTestCase {
         )
     }
 
-    func testImmediateScrollResizeKeepsPointerInsideWindowForNextWheelStep() {
+    func testImmediateScrollResizePreservesTopLeftAnchor() {
         let originalAutoResize = SettingsManager.shared.autoResizeToImageSize
         let originalAnchor = SettingsManager.shared.windowResizeAnchor
         defer {
@@ -1234,6 +1234,7 @@ final class ViewControllerTests: XCTestCase {
         viewController.fileListManager.fileURLs = [largeFileURL, tinyFileURL]
         viewController.fileListManager.currentIndex = 0
 
+        let frameBeforeScroll = window.frame
         let initialContentRect = window.contentRect(forFrameRect: window.frame)
         let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame ?? initialContentRect
         let pointerScreenPoint = NSPoint(
@@ -1253,10 +1254,21 @@ final class ViewControllerTests: XCTestCase {
             self.viewController.displayedFileURL == tinyFileURL
         }
 
-        let resizedContentRect = window.contentRect(forFrameRect: window.frame)
+        XCTAssertEqual(
+            window.frame.minX,
+            frameBeforeScroll.minX,
+            accuracy: 0.01,
+            "Top-left resize must preserve the window's left edge"
+        )
+        XCTAssertEqual(
+            window.frame.maxY,
+            frameBeforeScroll.maxY,
+            accuracy: 0.01,
+            "Top-left resize must preserve the window's top edge"
+        )
         XCTAssertTrue(
-            resizedContentRect.contains(pointerScreenPoint),
-            "Immediate resize must keep the pointer over the content view so the next wheel event arrives"
+            viewController.isOffWindowScrollCaptureActive,
+            "Scroll capture must continue navigation when the resized window leaves the pointer outside"
         )
 
         guard let previousScrollEvent = makeScrollEvent(
@@ -1266,10 +1278,19 @@ final class ViewControllerTests: XCTestCase {
             XCTFail("A second mouse-wheel event should be available")
             return
         }
-        viewController.handleScroll(with: previousScrollEvent)
-        waitUntil(description: "next wheel step still reaches the large image") {
+        XCTAssertTrue(
+            viewController.handleCapturedOffWindowScroll(
+                previousScrollEvent,
+                currentPointer: pointerScreenPoint,
+                requireActiveWindow: false
+            ),
+            "The captured wheel event should be handled without moving the pointer"
+        )
+        waitUntil(description: "captured wheel step reaches the large image") {
             self.viewController.displayedFileURL == largeFileURL
         }
+        XCTAssertEqual(window.frame.minX, frameBeforeScroll.minX, accuracy: 0.01)
+        XCTAssertEqual(window.frame.maxY, frameBeforeScroll.maxY, accuracy: 0.01)
     }
 
     func testDiscreteScrollPreservesAcceleratedStepMagnitude() {
