@@ -268,6 +268,10 @@ class DraggableImageView: NSImageView {
     }
     
     override func scrollWheel(with event: NSEvent) {
+        PerformanceLog.shared.event(
+            "EVENT-ROUTE",
+            "image-view window=\(event.windowNumber) dx=\(event.scrollingDeltaX) dy=\(event.scrollingDeltaY) delegate=\(panningDelegate == nil ? 0 : 1) hidden=\(isHidden ? 1 : 0) alpha=\(alphaValue) frame=\(NSStringFromRect(frame)) bounds=\(NSStringFromRect(bounds)) visible=\(NSStringFromRect(visibleRect))"
+        )
         // Always forward scrolling. The view controller decides whether the event
         // should pan a zoomed image or navigate between images.
         if let panningDelegate = panningDelegate {

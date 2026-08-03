@@ -94,6 +94,11 @@ class FileListManager {
             return supportedExtensions.contains(pathExtension)
         }.map { directoryURL.appendingPathComponent($0.lastPathComponent) }
         let sortedFileURLs = sortFiles(filtered, by: sortSettings)
+        PerformanceLog.shared.event(
+            "FILELIST",
+            "directory=\(directoryURL.path) discovered=\(fileURLs.count) supported=\(sortedFileURLs.count) order=\(sortSettings.order) ascending=\(sortSettings.ascending ? 1 : 0)"
+        )
+        PerformanceLog.shared.snapshotDirectory(directoryURL, reason: "prepare")
 
         // Find the index of the current file
         let requestedPath = fileURL.resolvingSymlinksInPath().standardizedFileURL.path

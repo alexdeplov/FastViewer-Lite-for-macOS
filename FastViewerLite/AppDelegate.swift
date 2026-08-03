@@ -11,6 +11,7 @@
 import Cocoa
 import UniformTypeIdentifiers
 import Darwin
+import os.log
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     private static let hasPresentedInitialSettingsKey = "HasPresentedInitialSettings"
@@ -52,8 +53,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
     }
 
     func applicationDidFinishLaunching(_ aNotification: Notification) {
-//        PerformanceLog.shared.start()
-//        PerformanceLog.shared.event("APP", "didFinishLaunching")
+        PerformanceLog.shared.start()
+        PerformanceLog.shared.event("APP", "didFinishLaunching bundle=\(Bundle.main.bundleIdentifier ?? "unknown") configuration=DEBUG")
         // Set activation policy to ensure app appears in dock
         NSApp.setActivationPolicy(.regular)
         
@@ -1017,7 +1018,11 @@ final class PerformanceLog {
     private var fileHandle: FileHandle?
     private var watchdog: DispatchSourceTimer?
     private let startedAt = ProcessInfo.processInfo.systemUptime
+    private let sessionID = UUID().uuidString
+    private var nextID: UInt64 = 0
+    private var eventCount: UInt64 = 0
     private(set) var fileURL: URL?
+    private let signposter = OSSignposter(subsystem: "com.aleksandr.deplov.FastViewerLite", category: "Performance")
 
     private init() {}
 
@@ -1037,7 +1042,7 @@ final class PerformanceLog {
             FileManager.default.createFile(atPath: url.path, contents: nil)
             fileHandle = try? FileHandle(forWritingTo: url)
             fileURL = url
-            writeLocked("0.000 [LOG] session-start pid=\(getpid()) macOS=\(ProcessInfo.processInfo.operatingSystemVersionString)\n")
+            writeLocked("0.000 [LOG] session-start session=\(sessionID) pid=\(getpid()) macOS=\(ProcessInfo.processInfo.operatingSystemVersionString) osArch=\(ProcessInfo.processInfo.machineHardwareName)\n")
         }
 
         NSLog("[PerformanceLog] %@", fileURL?.path ?? "unavailable")
@@ -1066,7 +1071,49 @@ final class PerformanceLog {
             self.writeLocked(
                 String(format: "%.3f [%@] [%@] %@\n", timestamp, category, thread, resolvedMessage)
             )
+            self.eventCount &+= 1
+            if self.eventCount.isMultiple(of: 100) {
+                try? self.fileHandle?.synchronize()
+            }
         }
+    }
+
+    func makeEventID() -> UInt64 {
+        queue.sync {
+            nextID &+= 1
+            return nextID
+        }
+    }
+
+    func signpost(_ name: StaticString, _ eventID: UInt64, _ message: String = "") {
+        guard isEnabled else { return }
+        let id = signposter.makeSignpostID()
+        signposter.emitEvent(name, id: id, "event=\(eventID) \(message, privacy: .public)")
+    }
+
+    func snapshotDirectory(_ directoryURL: URL, reason: String) {
+        guard isEnabled else { return }
+        let started = ProcessInfo.processInfo.systemUptime
+        let values: [URLResourceKey] = [
+            .fileSizeKey, .contentModificationDateKey, .creationDateKey,
+            .isRegularFileKey, .typeIdentifierKey
+        ]
+        guard let urls = try? FileManager.default.contentsOfDirectory(
+            at: directoryURL, includingPropertiesForKeys: values, options: [.skipsHiddenFiles]
+        ) else {
+            event("FILES", "snapshot-failed reason=\(reason) directory=\(directoryURL.path)")
+            return
+        }
+        let rows = urls.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            .compactMap { url -> String? in
+                guard let rv = try? url.resourceValues(forKeys: Set(values)) else { return nil }
+                return "name=\(url.lastPathComponent) size=\(rv.fileSize ?? -1) mtime=\(rv.contentModificationDate?.timeIntervalSince1970 ?? -1) ctime=\(rv.creationDate?.timeIntervalSince1970 ?? -1) regular=\((rv.isRegularFile ?? false) ? 1 : 0) uti=\(rv.typeIdentifier ?? "-")"
+            }
+        event("FILES", "snapshot-begin reason=\(reason) directory=\(directoryURL.path) count=\(rows.count)")
+        for (index, row) in rows.enumerated() {
+            event("FILES", "item index=\(index) \(row)")
+        }
+        event("FILES", String(format: "snapshot-end reason=%@ duration=%.1fms", reason, (ProcessInfo.processInfo.systemUptime - started) * 1_000))
     }
 
     private func startMainThreadWatchdog() {
@@ -1082,9 +1129,10 @@ final class PerformanceLog {
                 self.event(
                     "MAIN-STALL",
                     String(
-                        format: "latency=%.1fms resident=%@",
+                        format: "latency=%.1fms resident=%@ state=%@",
                         delay * 1_000,
-                        Self.residentMemoryDescription()
+                        Self.residentMemoryDescription(),
+                        (NSApp.delegate as? AppDelegate)?.viewController?.performanceDiagnosticSummary() ?? "unavailable"
                     )
                 )
             }
@@ -1113,5 +1161,15 @@ final class PerformanceLog {
         }
         guard result == size else { return "unknown" }
         return String(format: "%.1fMB", Double(info.pti_resident_size) / 1_048_576)
+    }
+}
+
+private extension ProcessInfo {
+    var machineHardwareName: String {
+        var size: size_t = 0
+        sysctlbyname("hw.machine", nil, &size, nil, 0)
+        var machine = [CChar](repeating: 0, count: size)
+        sysctlbyname("hw.machine", &machine, &size, nil, 0)
+        return String(cString: machine)
     }
 }

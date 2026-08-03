@@ -33,6 +33,22 @@ final class ViewControllerTests: XCTestCase {
         XCTAssertEqual(viewController.imageView.imageAlignment, .alignCenter, "Image alignment should be center")
     }
 
+    func testInvisibleCenteredToastDoesNotInterceptImageHitTestingInSmallWindow() {
+        let window = makeTestWindow()
+        window.setContentSize(NSSize(width: 300, height: 300))
+        viewController.view.layoutSubtreeIfNeeded()
+
+        let center = NSPoint(
+            x: viewController.view.bounds.midX,
+            y: viewController.view.bounds.midY
+        )
+
+        XCTAssertTrue(
+            viewController.view.hitTest(center) === viewController.imageView,
+            "The decorative toast over a 300x300 image must pass wheel events through to the image view"
+        )
+    }
+
     func testImageLinkDetectorFindsHTTPAndHTTPSLinks() {
         let text = "Open https://example.com or http://openai.com/docs"
         let fallbackBounds = CGRect(x: 0.1, y: 0.2, width: 0.8, height: 0.1)
@@ -1128,6 +1144,56 @@ final class ViewControllerTests: XCTestCase {
 
         XCTAssertEqual(viewController.fileListManager.currentIndex, 2)
         XCTAssertEqual(viewController.displayedFileURL, thirdFileURL)
+    }
+
+    func testRapidNavigationPreviewImmediatelyFillsAutoResizedWindow() {
+        let originalAutoResize = SettingsManager.shared.autoResizeToImageSize
+        defer { SettingsManager.shared.autoResizeToImageSize = originalAutoResize }
+        SettingsManager.shared.autoResizeToImageSize = true
+
+        let window = makeTestWindow()
+        let firstFileURL = makeTestImageFile(
+            name: "test-preview-fill-first-\(UUID().uuidString).jpg",
+            size: NSSize(width: 400, height: 300)
+        )
+        let largeFileURL = makeTestImageFile(
+            name: "test-preview-fill-large-\(UUID().uuidString).jpg",
+            size: NSSize(width: 5000, height: 3000)
+        )
+        defer {
+            try? FileManager.default.removeItem(at: firstFileURL)
+            try? FileManager.default.removeItem(at: largeFileURL)
+        }
+
+        viewController.loadImage(from: firstFileURL)
+        waitUntil(description: "first image commits before preview-fill navigation") {
+            self.viewController.displayedFileURL == firstFileURL
+        }
+        viewController.fileListManager.fileURLs = [firstFileURL, largeFileURL]
+        viewController.fileListManager.currentIndex = 0
+
+        viewController.navigateWithDiscreteScroll(step: 1)
+        waitUntil(description: "large rapid-navigation preview commits") {
+            self.viewController.displayedFileURL == largeFileURL
+        }
+
+        guard let preview = viewController.imageView.image,
+              let previewPixels = preview.cgImage(
+                forProposedRect: nil,
+                context: nil,
+                hints: nil
+              ) else {
+            XCTFail("A decoded rapid-navigation preview should be displayed")
+            return
+        }
+        let contentSize = window.contentRect(forFrameRect: window.frame).size
+        XCTAssertLessThanOrEqual(max(previewPixels.width, previewPixels.height), 1024)
+        XCTAssertGreaterThan(max(contentSize.width, contentSize.height), 1024)
+        XCTAssertEqual(
+            viewController.imageView.imageScaling,
+            .scaleProportionallyUpOrDown,
+            "The 1024px preview must already fill the final auto-resized frame"
+        )
     }
 
     func testDiscreteScrollCanReverseWhileForwardImageIsPending() {

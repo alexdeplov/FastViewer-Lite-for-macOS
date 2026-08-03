@@ -9,6 +9,15 @@ import Cocoa
 import ImageIO
 import CoreGraphics
 
+/// Decorative HUD surfaces must never become the event target. In particular,
+/// an alpha-zero toast is still hit-testable in AppKit and can otherwise swallow
+/// wheel events after auto-resize moves it under a stationary pointer.
+private final class PassthroughVisualEffectView: NSVisualEffectView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+}
+
 class ViewController: NSViewController, NSDraggingDestination, DraggingDestinationHandler, PanningHandler {
 
     /// A subtle adaptive gray for the empty canvas, kept close to the standard window color.
@@ -88,6 +97,9 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     private var offWindowScrollLocalMonitor: Any?
     private var offWindowScrollGlobalMonitor: Any?
     private var offWindowScrollScreenPoint: NSPoint?
+    private var diagnosticScrollLocalMonitor: Any?
+    private var diagnosticScrollGlobalMonitor: Any?
+    private var scrollGeometryTraceGeneration: UInt64 = 0
     private var appResignActiveObserver: NSObjectProtocol?
     private var windowResignKeyObserver: NSObjectProtocol?
     internal var isOffWindowScrollCaptureActive: Bool {
@@ -132,6 +144,8 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     private var lastNavigationRequestTime: TimeInterval = 0
     private var rapidNavigationDecodeMaxSize: Int?
     private var rapidNavigationTargetIndex: Int?
+    private var rapidNavigationScrollPointer: NSPoint?
+    private var lastDiscreteScrollDirection: Int = 0
     private var rightKeyTraceActive = false
     private var rightKeyTraceGeneration = 0
     private var rightKeyTraceStartedAt: TimeInterval = 0
@@ -166,6 +180,9 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     private var currentCursorType: CursorType = .default
     private var accumulatedNavigationScroll: CGFloat = 0
     private var lastScrollNavigationTime: TimeInterval = 0
+    private var activeScrollEventID: UInt64?
+    private var lastDisplayScrollEventID: UInt64?
+    private var pendingNavigationStartedAt: TimeInterval?
     private let preciseScrollNavigationThreshold: CGFloat = 30
     private let scrollNavigationInterval: TimeInterval = 0.18
     private let offWindowScrollPointerTolerance: CGFloat = 2
@@ -220,6 +237,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         setupDragAndDrop()
         setupImageLinkMouseMonitor()
         setupOffWindowScrollCancellationObservers()
+        setupDiagnosticScrollMonitors()
     }
 
     override func viewWillAppear() {
@@ -234,7 +252,13 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
 
     deinit {
         cancelImageLinkDetection()
-        stopOffWindowScrollCapture()
+        stopOffWindowScrollCapture(reason: "deinit")
+        if let diagnosticScrollLocalMonitor {
+            NSEvent.removeMonitor(diagnosticScrollLocalMonitor)
+        }
+        if let diagnosticScrollGlobalMonitor {
+            NSEvent.removeMonitor(diagnosticScrollGlobalMonitor)
+        }
         if let imageLinkMouseMonitor {
             NSEvent.removeMonitor(imageLinkMouseMonitor)
         }
@@ -277,7 +301,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.stopOffWindowScrollCapture()
+            self?.stopOffWindowScrollCapture(reason: "application-resigned-active")
         }
         windowResignKeyObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification,
@@ -288,8 +312,45 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
                   notification.object as? NSWindow === self.view.window else {
                 return
             }
-            self.stopOffWindowScrollCapture()
+            self.stopOffWindowScrollCapture(reason: "window-resigned-key")
         }
+    }
+
+    /// Observes wheel events before responder dispatch. The global monitor fills
+    /// the diagnostic gap when resizing leaves the stationary pointer outside all
+    /// FastViewer windows; it does not consume or modify events.
+    private func setupDiagnosticScrollMonitors() {
+        #if DEBUG
+        diagnosticScrollLocalMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: .scrollWheel
+        ) { [weak self] event in
+            guard let self else { return event }
+            let pointer = event.window?.convertPoint(toScreen: event.locationInWindow)
+                ?? NSEvent.mouseLocation
+            PerformanceLog.shared.event(
+                "EVENT-ROUTE",
+                "local-pre window=\(event.windowNumber) targetWindow=\(event.window === self.view.window ? 1 : 0) dx=\(event.scrollingDeltaX) dy=\(event.scrollingDeltaY) pointer=\(NSStringFromPoint(pointer))"
+            )
+            self.startScrollGeometryTrace(trigger: "local-pre")
+            return event
+        }
+
+        diagnosticScrollGlobalMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: .scrollWheel
+        ) { [weak self] event in
+            let dx = event.scrollingDeltaX
+            let dy = event.scrollingDeltaY
+            let pointer = NSEvent.mouseLocation
+            PerformanceLog.shared.event(
+                "EVENT-ROUTE",
+                "global-outside-app window=\(event.windowNumber) dx=\(dx) dy=\(dy) pointer=\(NSStringFromPoint(pointer))"
+            )
+            DispatchQueue.main.async {
+                self?.startScrollGeometryTrace(trigger: "global-outside-app")
+            }
+        }
+        PerformanceLog.shared.event("EVENT-ROUTE", "diagnostic-monitors-installed local=1 global=1")
+        #endif
     }
 
     /// Sets up observer for view appearance changes
@@ -855,15 +916,29 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         resizeAnchor: WindowResizeAnchor,
         window: NSWindow
     ) {
-        guard resizeAnchor == .topLeft,
-              SettingsManager.shared.autoResizeToImageSize,
-              let screenPoint,
-              !window.contentRect(forFrameRect: frame).contains(screenPoint) else {
-            stopOffWindowScrollCapture()
+        let contentRect = window.contentRect(forFrameRect: frame)
+        guard resizeAnchor == .topLeft else {
+            stopOffWindowScrollCapture(reason: "capture-not-needed anchor=\(resizeAnchor)")
+            return
+        }
+        guard SettingsManager.shared.autoResizeToImageSize else {
+            stopOffWindowScrollCapture(reason: "capture-not-needed auto-resize=0")
+            return
+        }
+        guard let screenPoint else {
+            stopOffWindowScrollCapture(reason: "capture-not-needed pointer=nil")
+            return
+        }
+        guard !contentRect.contains(screenPoint) else {
+            stopOffWindowScrollCapture(reason: "capture-not-needed pointer-inside-content")
             return
         }
 
         offWindowScrollScreenPoint = screenPoint
+        PerformanceLog.shared.event(
+            "OFFWINDOW",
+            "capture-required pointer=\(NSStringFromPoint(screenPoint)) proposedFrame=\(NSStringFromRect(frame)) proposedContent=\(NSStringFromRect(contentRect)) existingLocal=\(offWindowScrollLocalMonitor == nil ? 0 : 1) existingGlobal=\(offWindowScrollGlobalMonitor == nil ? 0 : 1)"
+        )
         guard offWindowScrollLocalMonitor == nil,
               offWindowScrollGlobalMonitor == nil else {
             return
@@ -875,9 +950,13 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         offWindowScrollLocalMonitor = NSEvent.addLocalMonitorForEvents(
             matching: .scrollWheel
         ) { [weak self] event in
-            guard let self,
-                  event.window !== self.view.window,
-                  self.handleCapturedOffWindowScroll(event) else {
+            guard let self else { return event }
+            PerformanceLog.shared.event(
+                "OFFWINDOW",
+                "local-callback eventWindow=\(event.windowNumber) targetWindow=\(event.window === self.view.window ? 1 : 0) dx=\(event.scrollingDeltaX) dy=\(event.scrollingDeltaY)"
+            )
+            guard event.window !== self.view.window,
+                  self.handleCapturedOffWindowScroll(event, source: "offwindow-local") else {
                 return event
             }
             return nil
@@ -886,11 +965,27 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         offWindowScrollGlobalMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: .scrollWheel
         ) { [weak self] event in
-            self?.handleCapturedOffWindowScroll(event)
+            PerformanceLog.shared.event(
+                "OFFWINDOW",
+                "global-callback eventWindow=\(event.windowNumber) dx=\(event.scrollingDeltaX) dy=\(event.scrollingDeltaY)"
+            )
+            DispatchQueue.main.async {
+                self?.handleCapturedOffWindowScroll(event, source: "offwindow-global")
+            }
         }
+        PerformanceLog.shared.event("OFFWINDOW", "capture-started local=1 global=1")
+        startScrollGeometryTrace(trigger: "offwindow-start")
     }
 
-    private func stopOffWindowScrollCapture() {
+    private func stopOffWindowScrollCapture(reason: String = "unspecified") {
+        let wasActive = offWindowScrollScreenPoint != nil ||
+            offWindowScrollLocalMonitor != nil || offWindowScrollGlobalMonitor != nil
+        if wasActive {
+            PerformanceLog.shared.event(
+                "OFFWINDOW",
+                "capture-stop reason=\(reason) pointer=\(offWindowScrollScreenPoint.map(NSStringFromPoint) ?? "-") local=\(offWindowScrollLocalMonitor == nil ? 0 : 1) global=\(offWindowScrollGlobalMonitor == nil ? 0 : 1)"
+            )
+        }
         offWindowScrollScreenPoint = nil
         if let offWindowScrollLocalMonitor {
             NSEvent.removeMonitor(offWindowScrollLocalMonitor)
@@ -906,27 +1001,65 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     internal func handleCapturedOffWindowScroll(
         _ event: NSEvent,
         currentPointer: NSPoint = NSEvent.mouseLocation,
-        requireActiveWindow: Bool = true
+        requireActiveWindow: Bool = true,
+        source: String = "offwindow-direct"
     ) -> Bool {
-        guard let screenPoint = offWindowScrollScreenPoint,
-              let window = view.window,
-              !requireActiveWindow || (NSApp.isActive && window.isKeyWindow && window.isVisible),
-              SettingsManager.shared.autoResizeToImageSize,
-              SettingsManager.shared.windowResizeAnchor == .topLeft,
-              imageView.image != nil,
-              !isPanningAvailable() else {
-            stopOffWindowScrollCapture()
+        PerformanceLog.shared.event(
+            "OFFWINDOW",
+            "evaluate source=\(source) currentPointer=\(NSStringFromPoint(currentPointer)) requireActive=\(requireActiveWindow ? 1 : 0)"
+        )
+        guard let screenPoint = offWindowScrollScreenPoint else {
+            stopOffWindowScrollCapture(reason: "reject-no-capture-point source=\(source)")
+            return false
+        }
+        guard let window = view.window else {
+            stopOffWindowScrollCapture(reason: "reject-no-window source=\(source)")
+            return false
+        }
+        guard !requireActiveWindow || (NSApp.isActive && window.isKeyWindow && window.isVisible) else {
+            stopOffWindowScrollCapture(
+                reason: "reject-window-state source=\(source) appActive=\(NSApp.isActive ? 1 : 0) key=\(window.isKeyWindow ? 1 : 0) visible=\(window.isVisible ? 1 : 0)"
+            )
+            return false
+        }
+        guard SettingsManager.shared.autoResizeToImageSize else {
+            stopOffWindowScrollCapture(reason: "reject-auto-resize-off source=\(source)")
+            return false
+        }
+        guard SettingsManager.shared.windowResizeAnchor == .topLeft else {
+            stopOffWindowScrollCapture(reason: "reject-anchor-changed source=\(source)")
+            return false
+        }
+        guard imageView.image != nil else {
+            stopOffWindowScrollCapture(reason: "reject-no-image source=\(source)")
+            return false
+        }
+        guard !isPanningAvailable() else {
+            stopOffWindowScrollCapture(reason: "reject-panning-available source=\(source)")
             return false
         }
 
-        guard abs(currentPointer.x - screenPoint.x) <= offWindowScrollPointerTolerance,
-              abs(currentPointer.y - screenPoint.y) <= offWindowScrollPointerTolerance,
-              !window.contentRect(forFrameRect: window.frame).contains(currentPointer) else {
-            stopOffWindowScrollCapture()
+        let pointerDelta = NSPoint(
+            x: currentPointer.x - screenPoint.x,
+            y: currentPointer.y - screenPoint.y
+        )
+        guard abs(pointerDelta.x) <= offWindowScrollPointerTolerance,
+              abs(pointerDelta.y) <= offWindowScrollPointerTolerance else {
+            stopOffWindowScrollCapture(
+                reason: "reject-pointer-moved source=\(source) delta=\(NSStringFromPoint(pointerDelta)) tolerance=\(offWindowScrollPointerTolerance)"
+            )
+            return false
+        }
+        let contentRect = window.contentRect(forFrameRect: window.frame)
+        guard !contentRect.contains(currentPointer) else {
+            stopOffWindowScrollCapture(
+                reason: "reject-pointer-inside-content source=\(source) content=\(NSStringFromRect(contentRect))"
+            )
             return false
         }
 
-        processScroll(event, screenPoint: screenPoint)
+        PerformanceLog.shared.event("OFFWINDOW", "accepted source=\(source)")
+        processScroll(event, screenPoint: screenPoint, source: source)
         return true
     }
 
@@ -1184,7 +1317,6 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
 
     /// Starts prefetching images around the current file position
     private func startPrefetching(at index: Int? = nil) {
-        guard !isRapidNavigation else { return }
         let fileURLs = fileListManager.fileURLs
         let currentIndex = index ?? fileListManager.currentIndex
         let maxSize = preferredDecodeMaxSize()
@@ -1220,16 +1352,16 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
 
     /// Displays an image from file URL without reloading the file list
     /// - Parameter fileURL: URL to the image file
-    private func markRapidNavigation() {
+    private func markRapidNavigation(forcePreview: Bool = false) {
         let now = ProcessInfo.processInfo.systemUptime
-        let enteringRapidNavigation = now - lastNavigationRequestTime < 0.35
+        let enteringRapidNavigation = forcePreview || now - lastNavigationRequestTime < 0.35
         if enteringRapidNavigation, !isRapidNavigation {
             // Keep one stable cache key while the user is scrubbing. Window
             // resizing must not cause every image to be decoded again at a new
             // maxSize.
             // Fast-scroll needs a lightweight preview, not window-resolution
             // decoding. Full quality is requested after the key is released.
-            rapidNavigationDecodeMaxSize = min(1024, preferredDecodeMaxSize())
+            rapidNavigationDecodeMaxSize = 1024
             ImageCacheManager.shared.cancelPrefetching()
         }
         isRapidNavigation = enteringRapidNavigation
@@ -1241,6 +1373,8 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             self.isRapidNavigation = false
             self.rapidNavigationDecodeMaxSize = nil
             self.rapidNavigationTargetIndex = nil
+            self.rapidNavigationScrollPointer = nil
+            self.lastDiscreteScrollDirection = 0
             if let fileURL = self.displayedFileURL {
                 self.updateFileInfo(for: fileURL)
                 self.requestSharperImageIfNeeded()
@@ -1269,6 +1403,9 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             return
         }
 
+        if currentImageLoadOperation != nil {
+            PerformanceLog.shared.event("DISPLAY", "cancel-previous reason=new-request file=\(fileURL.lastPathComponent)")
+        }
         currentImageLoadOperation?.cancel()
         currentImageLoadOperation = nil
         imageQualityLoadOperation?.cancel()
@@ -1280,7 +1417,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         imageLoadGeneration += 1
         let generation = imageLoadGeneration
         var decodeMaxSize = preferredDecodeMaxSize()
-        if SettingsManager.shared.autoResizeToImageSize {
+        if SettingsManager.shared.autoResizeToImageSize, !isRapidNavigation {
             let originalSize = cachedOriginalPixelSize(
                 for: fileURL,
                 fallbackImage: imageView.image ?? NSImage(size: .zero)
@@ -1291,6 +1428,9 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             )
         }
         let requestStartedAt = ProcessInfo.processInfo.systemUptime
+        let scrollEventID = activeScrollEventID
+        lastDisplayScrollEventID = scrollEventID
+        pendingNavigationStartedAt = requestStartedAt
 
         // Move the rolling prefetch cursor when navigation is requested, not after
         // the foreground decode commits. This keeps the range ahead of fast input.
@@ -1304,7 +1444,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         ) {
             PerformanceLog.shared.event(
                 "DISPLAY",
-                "cache-hit file=\(fileURL.lastPathComponent) maxSize=\(decodeMaxSize)"
+                "cache-hit file=\(fileURL.lastPathComponent) maxSize=\(decodeMaxSize) scrollID=\(scrollEventID.map(String.init) ?? "-") totalMs=\((ProcessInfo.processInfo.systemUptime - requestStartedAt) * 1_000)"
             )
             commitDisplayedImage(
                 image,
@@ -1343,10 +1483,11 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             PerformanceLog.shared.event(
                 "DISPLAY",
                 String(
-                    format: "decode-complete file=%@ generation=%d duration=%.1fms",
+                    format: "decode-complete file=%@ generation=%d duration=%.1fms scrollID=%@",
                     fileURL.lastPathComponent,
                     generation,
-                    (ProcessInfo.processInfo.systemUptime - requestStartedAt) * 1_000
+                    (ProcessInfo.processInfo.systemUptime - requestStartedAt) * 1_000,
+                    scrollEventID.map(String.init) ?? "-"
                 )
             )
 
@@ -1384,7 +1525,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         cancelImageLinkDetection()
         PerformanceLog.shared.event(
             "DISPLAY",
-            "commit file=\(fileURL.lastPathComponent) index=\(fileListManager.currentIndex)/\(fileListManager.fileURLs.count)"
+            "commit file=\(fileURL.lastPathComponent) index=\(fileListManager.currentIndex)/\(fileListManager.fileURLs.count) scrollID=\(lastDisplayScrollEventID.map(String.init) ?? "-") pendingMs=\(pendingNavigationStartedAt.map { (ProcessInfo.processInfo.systemUptime - $0) * 1_000 } ?? -1)"
         )
         #if DEBUG
         NSLog(
@@ -1488,6 +1629,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         }
 
         showToast(message: "Couldn't open \(fileURL.lastPathComponent)")
+        pumpRapidNavigationIfNeeded()
     }
 
     private func applyFileListCommit(_ fileListCommit: FileListCommit) {
@@ -1564,8 +1706,12 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             autoResizeWorkItem?.cancel()
             autoResizeWorkItem = nil
             resetZoomForFile(fileURL)
+            // The rapid-navigation image is intentionally decoded at 1024 px,
+            // while the window is already sized from the original file metadata.
+            // Scale that preview into the final frame immediately so the later
+            // sharper decode replaces pixels without changing visible geometry.
+            updateImageScaling(for: image)
             if !isRapidNavigation {
-                updateImageScaling(for: image)
                 requestSharperImageIfNeeded()
             }
             refreshBackgroundForCurrentImage()
@@ -1698,44 +1844,107 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     }
 
     private func pumpRapidNavigationIfNeeded() {
-        guard isRapidNavigation,
-              currentImageLoadOperation == nil,
-              pendingImageURL == nil,
-              let targetIndex = rapidNavigationTargetIndex,
-              let currentIndex = displayedFileURL.flatMap({ fileListManager.fileURLs.firstIndex(of: $0) }),
-              targetIndex != currentIndex,
-              targetIndex >= 0,
-              targetIndex < fileListManager.fileURLs.count else {
+        guard isRapidNavigation else {
+            PerformanceLog.shared.event("NAV-PUMP", "skip reason=not-rapid")
+            return
+        }
+        guard currentImageLoadOperation == nil else {
+            PerformanceLog.shared.event(
+                "NAV-PUMP",
+                "wait reason=active-decode target=\(rapidNavigationTargetIndex.map(String.init) ?? "-") pending=\(pendingImageURL?.lastPathComponent ?? "-")"
+            )
+            return
+        }
+        guard pendingImageURL == nil else {
+            PerformanceLog.shared.event(
+                "NAV-PUMP",
+                "wait reason=pending-without-operation target=\(rapidNavigationTargetIndex.map(String.init) ?? "-") pending=\(pendingImageURL?.lastPathComponent ?? "-")"
+            )
+            return
+        }
+        guard let targetIndex = rapidNavigationTargetIndex else {
+            PerformanceLog.shared.event("NAV-PUMP", "idle reason=no-target")
+            return
+        }
+        guard targetIndex >= 0, targetIndex < fileListManager.fileURLs.count else {
+            PerformanceLog.shared.event(
+                "NAV-PUMP",
+                "blocked reason=invalid-target target=\(targetIndex) count=\(fileListManager.fileURLs.count)"
+            )
             return
         }
 
+        if let currentIndex = displayedFileURL.flatMap({ fileListManager.fileURLs.firstIndex(of: $0) }),
+           targetIndex == currentIndex {
+            PerformanceLog.shared.event(
+                "NAV-PUMP",
+                "idle reason=target-already-displayed target=\(targetIndex)"
+            )
+            rapidNavigationTargetIndex = nil
+            return
+        }
+
+        PerformanceLog.shared.event(
+            "NAV-PUMP",
+            "start target=\(targetIndex) file=\(fileListManager.fileURLs[targetIndex].lastPathComponent)"
+        )
         rapidNavigationTargetIndex = nil
         displayImage(
             from: fileListManager.fileURLs[targetIndex],
-            fileListCommit: .currentIndex(targetIndex)
+            fileListCommit: .currentIndex(targetIndex),
+            keepingScrollPointerAt: rapidNavigationScrollPointer
         )
     }
 
-    /// Moves the navigation cursor immediately. Foreground loading is latest-wins:
-    /// a newer wheel target cancels the obsolete request instead of waiting for an
-    /// intermediate image to commit and making scrolling appear frozen.
+    /// Advances the logical wheel cursor immediately while keeping at most one
+    /// foreground decode active. Intermediate wheel events collapse into the
+    /// latest target; a completed preview is presented before the pump continues.
     internal func navigateWithDiscreteScroll(
         step: Int,
         keepingPointerAt screenPoint: NSPoint? = nil
     ) {
-        guard step != 0,
-              let currentIndex = currentVisibleFileIndex(),
-              !fileListManager.fileURLs.isEmpty else {
+        guard step != 0, !fileListManager.fileURLs.isEmpty else {
             return
         }
 
+        markRapidNavigation(forcePreview: true)
+        let baseIndex = rapidNavigationTargetIndex ?? currentVisibleFileIndex()
+        guard let currentIndex = baseIndex else {
+            PerformanceLog.shared.event(
+                "NAV-PUMP",
+                "blocked reason=no-base-index step=\(step) current=\(fileListManager.currentIndex) displayed=\(displayedFileURL?.lastPathComponent ?? "-") pending=\(pendingImageURL?.lastPathComponent ?? "-")"
+            )
+            return
+        }
         let fileCount = fileListManager.fileURLs.count
         let targetIndex = ((currentIndex + step) % fileCount + fileCount) % fileCount
-        displayImage(
-            from: fileListManager.fileURLs[targetIndex],
-            fileListCommit: .currentIndex(targetIndex),
-            keepingScrollPointerAt: screenPoint
+        let direction = step > 0 ? 1 : -1
+
+        // Reversing direction is the one case where finishing the obsolete
+        // decode hurts responsiveness. Cancel once at the direction boundary,
+        // rather than once per wheel event.
+        if lastDiscreteScrollDirection != 0,
+           direction != lastDiscreteScrollDirection,
+           currentImageLoadOperation != nil {
+            PerformanceLog.shared.event(
+                "DISPLAY",
+                "cancel-previous reason=wheel-direction-change target=\(targetIndex)"
+            )
+            imageLoadGeneration += 1
+            currentImageLoadOperation?.cancel()
+            currentImageLoadOperation = nil
+            pendingImageURL = nil
+        }
+
+        lastDiscreteScrollDirection = direction
+        rapidNavigationTargetIndex = targetIndex
+        rapidNavigationScrollPointer = screenPoint
+        PerformanceLog.shared.event(
+            "NAV-PUMP",
+            "enqueue step=\(step) base=\(currentIndex) target=\(targetIndex) current=\(fileListManager.currentIndex) count=\(fileCount) active=\(currentImageLoadOperation == nil ? 0 : 1) pending=\(pendingImageURL?.lastPathComponent ?? "-") displayed=\(displayedFileURL?.lastPathComponent ?? "-") maxSize=1024"
         )
+        startPrefetching(at: targetIndex)
+        pumpRapidNavigationIfNeeded()
     }
 
     private func currentVisibleFileIndex() -> Int? {
@@ -2082,7 +2291,12 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             let widthMatches = abs(imageSize.width - viewSize.width) < sizeTolerance
             let heightMatches = abs(imageSize.height - viewSize.height) < sizeTolerance
 
-            if widthMatches && heightMatches {
+            if shouldFillAutoResizedFrameWithPreview(image) {
+                // A downsampled preview represents the full-size file. The window
+                // already has the final aspect/size, so allow only this preview to
+                // scale up. Genuine small images retain their pixel-sized display.
+                imageView.imageScaling = .scaleProportionallyUpOrDown
+            } else if widthMatches && heightMatches {
                 // View size exactly matches image size - show at 100% scale
                 // .scaleProportionallyDown won't scale up, so it displays at original size
                 imageView.imageScaling = .scaleProportionallyDown
@@ -2112,6 +2326,23 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         // Update cursor when image scaling changes
         refreshCursorForCurrentMouseLocation()
         refreshBackgroundForCurrentImage()
+    }
+
+    private func shouldFillAutoResizedFrameWithPreview(_ image: NSImage) -> Bool {
+        guard SettingsManager.shared.autoResizeToImageSize,
+              let fileURL = displayedFileURL,
+              let decodedImage = image.cgImage(
+                forProposedRect: nil,
+                context: nil,
+                hints: nil
+              ) else {
+            return false
+        }
+
+        let originalSize = cachedOriginalPixelSize(for: fileURL, fallbackImage: image)
+        let tolerance: CGFloat = 1
+        return originalSize.width > CGFloat(decodedImage.width) + tolerance ||
+            originalSize.height > CGFloat(decodedImage.height) + tolerance
     }
 
     // MARK: - Zoom Functionality
@@ -2682,7 +2913,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     /// Sets up the file info pill view at the bottom left corner
     private func setupFileInfoPill() {
         // Create visual effect view with material surface
-        fileInfoPill = NSVisualEffectView()
+        fileInfoPill = PassthroughVisualEffectView()
         fileInfoPill.material = .hudWindow
         fileInfoPill.blendingMode = .withinWindow
         fileInfoPill.state = .active
@@ -2731,7 +2962,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     /// Sets up the file name pill view at the bottom right corner
     private func setupFileNamePill() {
         // Create visual effect view with material surface
-        fileNamePill = NSVisualEffectView()
+        fileNamePill = PassthroughVisualEffectView()
         fileNamePill.material = .hudWindow
         fileNamePill.blendingMode = .withinWindow
         fileNamePill.state = .active
@@ -2817,7 +3048,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     /// Sets up the toast notification view for displaying temporary messages (e.g., undo feedback)
     private func setupToastNotification() {
         // Create visual effect view with material surface
-        toastView = NSVisualEffectView()
+        toastView = PassthroughVisualEffectView()
         toastView.material = .hudWindow
         toastView.blendingMode = .withinWindow
         toastView.state = .active
@@ -3679,20 +3910,47 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         let screenPoint = event.window?.convertPoint(
             toScreen: event.locationInWindow
         ) ?? event.locationInWindow
-        processScroll(event, screenPoint: screenPoint)
+        PerformanceLog.shared.event(
+            "EVENT-ROUTE",
+            "controller-delegate window=\(event.windowNumber) pointer=\(NSStringFromPoint(screenPoint))"
+        )
+        processScroll(event, screenPoint: screenPoint, source: "image-view")
     }
 
-    private func processScroll(_ event: NSEvent, screenPoint: NSPoint) {
-        guard imageView.image != nil else { return }
+    private func processScroll(
+        _ event: NSEvent,
+        screenPoint: NSPoint,
+        source: String
+    ) {
+        startScrollGeometryTrace(trigger: "process-\(source)")
+        guard imageView.image != nil else {
+            PerformanceLog.shared.event("SCROLL", "ignored source=\(source) reason=no-image")
+            return
+        }
+        let scrollEventID = PerformanceLog.shared.makeEventID()
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        activeScrollEventID = scrollEventID
+        defer {
+            PerformanceLog.shared.event(
+                "SCROLL",
+                String(format: "end id=%llu source=%@ duration=%.1fms index=%d displayed=%@ pending=%@", scrollEventID, source, (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000, fileListManager.currentIndex, displayedFileURL?.lastPathComponent ?? "-", pendingImageURL?.lastPathComponent ?? "-")
+            )
+            activeScrollEventID = nil
+        }
         PerformanceLog.shared.event(
             "SCROLL",
             String(
-                format: "dx=%.2f dy=%.2f precise=%d phase=%ld momentum=%ld zoom=%.3f",
+                format: "begin id=%llu source=%@ dx=%.2f dy=%.2f precise=%d phase=%ld momentum=%ld timestamp=%.3f pointer=%.1fx%.1f zoom=%.3f",
+                scrollEventID,
+                source,
                 event.scrollingDeltaX,
                 event.scrollingDeltaY,
                 event.hasPreciseScrollingDeltas ? 1 : 0,
                 event.phase.rawValue,
                 event.momentumPhase.rawValue,
+                event.timestamp,
+                screenPoint.x,
+                screenPoint.y,
                 getCurrentZoomScale()
             )
         )
@@ -3700,6 +3958,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         // Keep two-finger panning for zoomed images. A mouse wheel still navigates
         // between files, even while the current image is zoomed.
         if event.hasPreciseScrollingDeltas && isPanningAvailable() {
+            PerformanceLog.shared.event("SCROLL", "pan id=\(scrollEventID)")
             panImage(with: event)
             return
         }
@@ -3710,6 +3969,113 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             // wheel callback can disturb the current event-tracking sequence.
             imageView.displayIfNeeded()
         }
+    }
+
+    /// Records the geometry and hit-testing state for three seconds after the
+    /// latest wheel event. If wheel delivery suddenly stops, the tail of this
+    /// trace shows which active area moved away from the stationary pointer.
+    private func startScrollGeometryTrace(trigger: String) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        scrollGeometryTraceGeneration &+= 1
+        let generation = scrollGeometryTraceGeneration
+        let startedAt = ProcessInfo.processInfo.systemUptime
+        recordScrollGeometry(trigger: trigger, elapsed: 0)
+        scheduleScrollGeometryTrace(
+            generation: generation,
+            trigger: trigger,
+            startedAt: startedAt
+        )
+    }
+
+    private func scheduleScrollGeometryTrace(
+        generation: UInt64,
+        trigger: String,
+        startedAt: TimeInterval
+    ) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            guard let self, self.scrollGeometryTraceGeneration == generation else { return }
+            let elapsed = ProcessInfo.processInfo.systemUptime - startedAt
+            self.recordScrollGeometry(trigger: trigger, elapsed: elapsed)
+            if elapsed < 3.0 {
+                self.scheduleScrollGeometryTrace(
+                    generation: generation,
+                    trigger: trigger,
+                    startedAt: startedAt
+                )
+            }
+        }
+    }
+
+    private func recordScrollGeometry(trigger: String, elapsed: TimeInterval) {
+        guard let window = view.window else {
+            PerformanceLog.shared.event(
+                "GEOMETRY",
+                String(format: "trigger=%@ elapsed=%.0fms no-window", trigger, elapsed * 1_000)
+            )
+            return
+        }
+
+        let pointer = NSEvent.mouseLocation
+        let pointInWindow = window.convertPoint(fromScreen: pointer)
+        let pointInView = view.convert(pointInWindow, from: nil)
+        let pointInImage = imageView.convert(pointInWindow, from: nil)
+        let contentRect = window.contentRect(forFrameRect: window.frame)
+        let contentPoint = window.contentView?.convert(pointInWindow, from: nil) ?? .zero
+        let contentHit = window.contentView?.hitTest(contentPoint)
+        let viewHit = view.hitTest(pointInView)
+        let imageHit = imageView.hitTest(pointInImage)
+        let responder = window.firstResponder.map { String(describing: type(of: $0)) } ?? "-"
+        let contentHitType = contentHit.map { String(describing: type(of: $0)) } ?? "-"
+        let viewHitType = viewHit.map { String(describing: type(of: $0)) } ?? "-"
+        let imageHitType = imageHit.map { String(describing: type(of: $0)) } ?? "-"
+        let targetIndex = rapidNavigationTargetIndex.map(String.init) ?? "-"
+
+        PerformanceLog.shared.event(
+            "GEOMETRY",
+            String(
+                format: "trigger=%@ elapsed=%.0fms pointer=%@ windowFrame=%@ contentRect=%@ pointerInWindow=%d pointerInContent=%d appActive=%d key=%d visible=%d firstResponder=%@ contentHit=%@ viewFrame=%@ viewBounds=%@ pointerInView=%d viewHit=%@ imageFrame=%@ imageBounds=%@ imageVisible=%@ pointerInImage=%d imageHit=%@ imageHidden=%d imageAlpha=%.2f imageHasWindow=%d offwindow=%d offLocal=%d offGlobal=%d capturePoint=%@ index=%d/%d target=%@ displayed=%@ pending=%@ activeDecode=%d rapid=%d",
+                trigger,
+                elapsed * 1_000,
+                NSStringFromPoint(pointer),
+                NSStringFromRect(window.frame),
+                NSStringFromRect(contentRect),
+                window.frame.contains(pointer) ? 1 : 0,
+                contentRect.contains(pointer) ? 1 : 0,
+                NSApp.isActive ? 1 : 0,
+                window.isKeyWindow ? 1 : 0,
+                window.isVisible ? 1 : 0,
+                responder,
+                contentHitType,
+                NSStringFromRect(view.frame),
+                NSStringFromRect(view.bounds),
+                view.bounds.contains(pointInView) ? 1 : 0,
+                viewHitType,
+                NSStringFromRect(imageView.frame),
+                NSStringFromRect(imageView.bounds),
+                NSStringFromRect(imageView.visibleRect),
+                imageView.bounds.contains(pointInImage) ? 1 : 0,
+                imageHitType,
+                imageView.isHidden ? 1 : 0,
+                imageView.alphaValue,
+                imageView.window === window ? 1 : 0,
+                isOffWindowScrollCaptureActive ? 1 : 0,
+                offWindowScrollLocalMonitor == nil ? 0 : 1,
+                offWindowScrollGlobalMonitor == nil ? 0 : 1,
+                offWindowScrollScreenPoint.map(NSStringFromPoint) ?? "-",
+                fileListManager.currentIndex,
+                fileListManager.fileURLs.count,
+                targetIndex,
+                displayedFileURL?.lastPathComponent ?? "-",
+                pendingImageURL?.lastPathComponent ?? "-",
+                currentImageLoadOperation == nil ? 0 : 1,
+                isRapidNavigation ? 1 : 0
+            )
+        )
+    }
+
+    func performanceDiagnosticSummary() -> String {
+        let imageSize = imageView?.image?.size ?? .zero
+        return "index=\(fileListManager.currentIndex)/\(fileListManager.fileURLs.count) displayed=\(displayedFileURL?.lastPathComponent ?? "-") pending=\(pendingImageURL?.lastPathComponent ?? "-") rapid=\(isRapidNavigation ? 1 : 0) image=\(Int(imageSize.width))x\(Int(imageSize.height)) window=\(Int(view.window?.frame.width ?? 0))x\(Int(view.window?.frame.height ?? 0)) cache={\(ImageCacheManager.shared.diagnosticSummary())}"
     }
 
     private func panImage(with event: NSEvent) {
@@ -3730,6 +4096,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     private func navigateWithScroll(_ event: NSEvent, screenPoint: NSPoint) -> Bool {
         let verticalDelta = event.scrollingDeltaY
         guard abs(verticalDelta) > abs(event.scrollingDeltaX), verticalDelta != 0 else {
+            PerformanceLog.shared.event("SCROLL", "ignored id=\(activeScrollEventID.map(String.init) ?? "-") reason=horizontal-or-zero")
             return false
         }
 
@@ -3740,11 +4107,13 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         if event.hasPreciseScrollingDeltas {
             accumulatedNavigationScroll += verticalDelta
             guard abs(accumulatedNavigationScroll) >= preciseScrollNavigationThreshold else {
+                PerformanceLog.shared.event("SCROLL", "ignored id=\(activeScrollEventID.map(String.init) ?? "-") reason=threshold accumulated=\(accumulatedNavigationScroll)")
                 return false
             }
 
             let now = event.timestamp
             guard now - lastScrollNavigationTime >= scrollNavigationInterval else {
+                PerformanceLog.shared.event("SCROLL", "ignored id=\(activeScrollEventID.map(String.init) ?? "-") reason=interval elapsed=\(now - lastScrollNavigationTime)")
                 return false
             }
             lastScrollNavigationTime = now
@@ -3760,14 +4129,14 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             let steps = 1
             PerformanceLog.shared.event(
                 "NAV",
-                "next accumulated=\(accumulatedNavigationScroll) steps=\(steps)"
+                "next id=\(activeScrollEventID.map(String.init) ?? "-") accumulated=\(accumulatedNavigationScroll) steps=\(steps)"
             )
             navigateWithDiscreteScroll(step: steps, keepingPointerAt: screenPoint)
         } else {
             let steps = 1
             PerformanceLog.shared.event(
                 "NAV",
-                "previous accumulated=\(accumulatedNavigationScroll) steps=\(steps)"
+                "previous id=\(activeScrollEventID.map(String.init) ?? "-") accumulated=\(accumulatedNavigationScroll) steps=\(steps)"
             )
             navigateWithDiscreteScroll(step: -steps, keepingPointerAt: screenPoint)
         }

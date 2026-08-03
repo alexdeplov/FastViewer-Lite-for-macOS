@@ -21,6 +21,17 @@ class ImageCacheManager {
     
     /// Operation queue for prefetching operations
     private let prefetchQueue: OperationQueue
+
+    /// Cache eviction can release hundreds of megabytes of decoded backing
+    /// stores. Keep that work away from AppKit's event thread and collapse rapid
+    /// navigation updates into one trim after scrolling becomes quiet.
+    private let cacheMaintenanceQueue = DispatchQueue(
+        label: "com.fastviewer.cache-maintenance",
+        qos: .utility
+    )
+    private var pendingTrimURLPrefixes: Set<String>?
+    private var pendingTrimRequestedMaxSize: Int = 0
+    private var trimWorkItem: DispatchWorkItem?
     
     /// Dispatch queue for synchronizing prefetch requests
     private let prefetchSyncQueue = DispatchQueue(label: "com.fastviewer.prefetchsync")
@@ -99,7 +110,20 @@ class ImageCacheManager {
     /// - Parameter url: The file URL
     /// - Returns: Cached image if available, nil otherwise
     func getCachedImage(for url: URL, maxSize: Int = 4000) -> NSImage? {
-        return imageCache.object(forKey: Self.cacheKey(for: url, maxSize: maxSize))
+        let image = imageCache.object(forKey: Self.cacheKey(for: url, maxSize: maxSize))
+        PerformanceLog.shared.event(
+            "CACHE",
+            "lookup file=\(url.lastPathComponent) maxSize=\(maxSize) hit=\(image == nil ? 0 : 1) \(diagnosticSummary())"
+        )
+        return image
+    }
+
+    func diagnosticSummary() -> String {
+        cacheStateLock.lock()
+        let count = cachedImageKeys.count
+        let cost = cachedImageCosts.values.reduce(0, +)
+        cacheStateLock.unlock()
+        return "cacheCount=\(count) cacheCost=\(cost)"
     }
 
     /// Cancels speculative work for a file that became the foreground target.
@@ -114,15 +138,68 @@ class ImageCacheManager {
     /// Keeps only the current navigation window in memory. This prevents a
     /// long key-hold session from filling the cache with every image visited.
     func trimImageCache(keeping urls: [URL], maxSize: Int) {
-        let keepKeys = Set(urls.map { Self.cacheKey(for: $0, maxSize: maxSize) })
-        cacheStateLock.lock()
-        let staleKeys = cachedImageKeys.filter { !keepKeys.contains($0) }
-        for key in staleKeys {
-            imageCache.removeObject(forKey: key)
-            cachedImageKeys.remove(key)
-            cachedImageCosts.removeValue(forKey: key)
+        let keepURLPrefixes = Set(urls.map { $0.standardizedFileURL.absoluteString + "|" })
+        cacheMaintenanceQueue.async { [weak self] in
+            guard let self else { return }
+            self.pendingTrimURLPrefixes = keepURLPrefixes
+            self.pendingTrimRequestedMaxSize = maxSize
+            self.trimWorkItem?.cancel()
+
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.performPendingTrim()
+            }
+            self.trimWorkItem = workItem
+            self.cacheMaintenanceQueue.asyncAfter(
+                deadline: .now() + .milliseconds(450),
+                execute: workItem
+            )
         }
+    }
+
+    private func performPendingTrim() {
+        guard let keepURLPrefixes = pendingTrimURLPrefixes else { return }
+        pendingTrimURLPrefixes = nil
+        let requestedMaxSize = pendingTrimRequestedMaxSize
+        pendingTrimRequestedMaxSize = 0
+        trimWorkItem = nil
+        let startedAt = ProcessInfo.processInfo.systemUptime
+
+        cacheStateLock.lock()
+        let staleKeys = Array(cachedImageKeys.filter { key in
+            !keepURLPrefixes.contains { (key as String).hasPrefix($0) }
+        })
         cacheStateLock.unlock()
+
+        PerformanceLog.shared.event(
+            "CACHE-TRIM",
+            "begin keepURLs=\(keepURLPrefixes.count) remove=\(staleKeys.count) requestedMaxSize=\(requestedMaxSize) thread=background"
+        )
+
+        // Releasing NSImage/CGImage backing stores on this queue is the important
+        // part. Small autorelease batches also avoid one large temporary release
+        // pool when a long scrolling session has accumulated many images.
+        for batchStart in stride(from: 0, to: staleKeys.count, by: 12) {
+            autoreleasepool {
+                let batchEnd = min(batchStart + 12, staleKeys.count)
+                cacheStateLock.lock()
+                for key in staleKeys[batchStart..<batchEnd] {
+                    imageCache.removeObject(forKey: key)
+                    cachedImageKeys.remove(key)
+                    cachedImageCosts.removeValue(forKey: key)
+                }
+                cacheStateLock.unlock()
+            }
+        }
+
+        PerformanceLog.shared.event(
+            "CACHE-TRIM",
+            String(
+                format: "end removed=%d duration=%.1fms %@",
+                staleKeys.count,
+                (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000,
+                diagnosticSummary()
+            )
+        )
     }
     
     /// Caches an image for the given URL
@@ -144,11 +221,15 @@ class ImageCacheManager {
         let cost = Self.decodedByteCost(of: image)
 
         cacheStateLock.lock()
-        defer { cacheStateLock.unlock() }
-        guard generation == nil || generation == cacheGeneration else { return }
+        guard generation == nil || generation == cacheGeneration else {
+            cacheStateLock.unlock()
+            return
+        }
         imageCache.setObject(image, forKey: key, cost: cost)
         cachedImageKeys.insert(key)
         cachedImageCosts[key] = cost
+        cacheStateLock.unlock()
+        PerformanceLog.shared.event("CACHE", "insert file=\(url.lastPathComponent) maxSize=\(maxSize) cost=\(cost) \(diagnosticSummary())")
     }
     
     /// Gets a cached average color for the given URL
@@ -261,7 +342,7 @@ class ImageCacheManager {
             indicesToPrefetch.sort { abs($0 - currentIndex) < abs($1 - currentIndex) }
             PerformanceLog.shared.event(
                 "PREFETCH",
-                "window=\(startIndex)...\(endIndex) queuedCandidates=\(indicesToPrefetch.count) generation=\(generation)"
+                "window=\(startIndex)...\(endIndex) queuedCandidates=\(indicesToPrefetch.count) generation=\(generation) \(self.diagnosticSummary())"
             )
             
             let candidates = indicesToPrefetch.map { index in
@@ -324,7 +405,7 @@ class ImageCacheManager {
                     let startedAt = ProcessInfo.processInfo.systemUptime
                     PerformanceLog.shared.event(
                         "PREFETCH",
-                        "begin file=\(fileURL.lastPathComponent) distance=\(distance)"
+                        "begin file=\(fileURL.lastPathComponent) distance=\(distance) \(self.diagnosticSummary())"
                     )
                     defer {
                         PerformanceLog.shared.event(
@@ -336,6 +417,7 @@ class ImageCacheManager {
                                 (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000
                             )
                         )
+                        PerformanceLog.shared.event("PREFETCH", "state-after file=\(fileURL.lastPathComponent) \(self.diagnosticSummary())")
                         self.prefetchSyncQueue.async { [weak self, weak operation] in
                             guard let self, let operation,
                                   self.prefetchOperations[operationKey] === operation else { return }
@@ -393,6 +475,12 @@ class ImageCacheManager {
     
     /// Clears the image cache
     func clearCache() {
+        cacheMaintenanceQueue.async { [weak self] in
+            self?.trimWorkItem?.cancel()
+            self?.trimWorkItem = nil
+            self?.pendingTrimURLPrefixes = nil
+            self?.pendingTrimRequestedMaxSize = 0
+        }
         prefetchSyncQueue.sync {
             cancelAllPrefetchOperations()
             unprefetchableKeys.removeAll()

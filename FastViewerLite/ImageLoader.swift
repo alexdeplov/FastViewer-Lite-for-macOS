@@ -76,9 +76,10 @@ class ImageLoader {
         guard !shouldCancel() else { return nil }
 
         let startedAt = ProcessInfo.processInfo.systemUptime
+        let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
         PerformanceLog.shared.event(
             "DECODE",
-            "begin file=\(fileURL.lastPathComponent) maxSize=\(maxSize) animated=\(allowsAnimatedImage)"
+            "begin file=\(fileURL.lastPathComponent) path=\(fileURL.path) size=\(resourceValues?.fileSize ?? -1) mtime=\(resourceValues?.contentModificationDate?.timeIntervalSince1970 ?? -1) maxSize=\(maxSize) animated=\(allowsAnimatedImage)"
         )
         let loadKey = "\(ImageCacheManager.cacheKey(for: fileURL, maxSize: maxSize))|\(allowsAnimatedImage)"
         inFlightLock.lock()
@@ -159,6 +160,11 @@ class ImageLoader {
                   let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil) else {
                 return nil
             }
+
+            PerformanceLog.shared.event(
+                "DECODE",
+                "source file=\(fileURL.lastPathComponent) frameCount=\(CGImageSourceGetCount(source))"
+            )
 
             // Animated images need their original encoded data so NSImage can retain
             // every frame. Static images stay on the URL-backed fast path.
@@ -286,6 +292,8 @@ class ImageLoader {
         let operation = BlockOperation()
         operation.addExecutionBlock { [weak self, weak operation] in
             guard let operation, !operation.isCancelled else { return }
+            let startedAt = ProcessInfo.processInfo.systemUptime
+            PerformanceLog.shared.event("DECODE-QUEUE", "begin file=\(fileURL.lastPathComponent) maxSize=\(maxSize)")
             // Load image - this runs on a queue with userInitiated QoS
             // CGImageSource operations may still use internal threads, but we've done
             // our best to ensure the operation runs at the correct priority
@@ -310,6 +318,10 @@ class ImageLoader {
 
             DispatchQueue.main.async {
                 guard !operation.isCancelled else { return }
+                PerformanceLog.shared.event(
+                    "DECODE-QUEUE",
+                    String(format: "complete file=%@ success=%d duration=%.1fms callback=main", fileURL.lastPathComponent, image == nil ? 0 : 1, (ProcessInfo.processInfo.systemUptime - startedAt) * 1_000)
+                )
                 completion(image)
             }
         }
