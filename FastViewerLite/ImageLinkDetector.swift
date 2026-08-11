@@ -156,12 +156,12 @@ final class ImageLinkDetector {
         return shouldCancel() ? [] : detectedLinks
     }
 
-    static func textMayContainURL(_ text: String) -> Bool {
+    nonisolated static func textMayContainURL(_ text: String) -> Bool {
         let lowercased = text.lowercased()
         return lowercased.contains("http") || lowercased.contains("www.")
     }
 
-    private static func observationMayContainURL(_ observation: VNRecognizedTextObservation) -> Bool {
+    private nonisolated static func observationMayContainURL(_ observation: VNRecognizedTextObservation) -> Bool {
         observation.topCandidates(3).contains { textMayContainURL($0.string) }
     }
 

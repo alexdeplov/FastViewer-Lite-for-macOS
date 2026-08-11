@@ -180,10 +180,15 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     private var currentCursorType: CursorType = .default
     private var accumulatedNavigationScroll: CGFloat = 0
     private var lastScrollNavigationTime: TimeInterval = 0
+    // Trackpad scrolling has its own session because precise events include
+    // the momentum tail. Mouse-wheel navigation below intentionally keeps its
+    // existing accumulator and timing behavior unchanged.
+    private var accumulatedTrackpadScroll: CGFloat = 0
     private var activeScrollEventID: UInt64?
     private var lastDisplayScrollEventID: UInt64?
     private var pendingNavigationStartedAt: TimeInterval?
     private let preciseScrollNavigationThreshold: CGFloat = 30
+    private let trackpadScrollNavigationThreshold: CGFloat = 12
     private let scrollNavigationInterval: TimeInterval = 0.18
     private let offWindowScrollPointerTolerance: CGFloat = 2
 
@@ -3955,14 +3960,28 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             )
         )
 
-        // Keep two-finger panning for zoomed images. A mouse wheel still navigates
-        // between files, even while the current image is zoomed.
-        if event.hasPreciseScrollingDeltas && isPanningAvailable() {
-            PerformanceLog.shared.event("SCROLL", "pan id=\(scrollEventID)")
-            panImage(with: event)
+        if event.hasPreciseScrollingDeltas {
+            // Precise events are produced by a trackpad. Momentum events are
+            // part of the same native event stream, so they must be consumed
+            // here instead of being turned into mouse-wheel style ticks.
+            if isPanningAvailable() {
+                PerformanceLog.shared.event(
+                    "SCROLL",
+                    "trackpad-pan id=\(scrollEventID) momentum=\(event.momentumPhase.isEmpty ? 0 : 1)"
+                )
+                panImage(with: event)
+                return
+            }
+
+            if navigateWithTrackpadScroll(event, screenPoint: screenPoint) {
+                imageView.displayIfNeeded()
+            }
             return
         }
 
+        // Preserve the existing mouse-wheel behavior exactly. In particular,
+        // its non-precise delta handling and navigation interval are separate
+        // from trackpad momentum handling above.
         if navigateWithScroll(event, screenPoint: screenPoint) {
             // Draw the cache hit now, but let AppKit commit the backing layer at the
             // normal event-loop boundary. Forcing a Core Animation flush from every
@@ -4143,6 +4162,69 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
 
         accumulatedNavigationScroll = 0
         return true
+    }
+
+    /// Handles precise horizontal trackpad scrolling while the image is not zoomed.
+    ///
+    /// macOS sends the decelerating part of a two-finger gesture as additional
+    /// scroll-wheel events with a non-empty `momentumPhase`. Keeping those
+    /// events in the same accumulator makes a fast swipe naturally continue
+    /// through the file list. Mouse-wheel events never enter this method.
+    private func navigateWithTrackpadScroll(
+        _ event: NSEvent,
+        screenPoint: NSPoint
+    ) -> Bool {
+        let hasMomentumPhase = !event.momentumPhase.isEmpty
+
+        if event.phase == .began {
+            accumulatedTrackpadScroll = 0
+        }
+
+        if event.phase == .cancelled || event.momentumPhase == .cancelled {
+            accumulatedTrackpadScroll = 0
+            return false
+        }
+
+        // Trackpad navigation intentionally uses the horizontal axis. The
+        // vertical axis remains available for two-axis panning when zoomed.
+        let horizontalDelta = event.scrollingDeltaX
+        guard abs(horizontalDelta) > abs(event.scrollingDeltaY), horizontalDelta != 0 else {
+            if event.phase == .ended && !hasMomentumPhase {
+                accumulatedTrackpadScroll = 0
+            }
+            if event.momentumPhase == .ended {
+                accumulatedTrackpadScroll = 0
+            }
+            return false
+        }
+
+        accumulatedTrackpadScroll += horizontalDelta
+
+        var didNavigate = false
+        while abs(accumulatedTrackpadScroll) >= trackpadScrollNavigationThreshold {
+            let step = accumulatedTrackpadScroll < 0 ? 1 : -1
+            accumulatedTrackpadScroll += step > 0
+                ? trackpadScrollNavigationThreshold
+                : -trackpadScrollNavigationThreshold
+            didNavigate = true
+
+            PerformanceLog.shared.event(
+                "NAV",
+                "trackpad step=\(step) delta=\(horizontalDelta) accumulated=\(accumulatedTrackpadScroll) momentum=\(hasMomentumPhase ? 1 : 0)"
+            )
+            navigateWithDiscreteScroll(step: step, keepingPointerAt: screenPoint)
+        }
+
+        // A gesture can end without a momentum tail. Reset only then; when
+        // momentum exists, its subsequent events must retain this accumulator.
+        if event.phase == .ended && !hasMomentumPhase {
+            accumulatedTrackpadScroll = 0
+        }
+        if event.momentumPhase == .ended {
+            accumulatedTrackpadScroll = 0
+        }
+
+        return didNavigate
     }
 
     /// Handles a magnification/trackpad event for pinch-to-zoom
