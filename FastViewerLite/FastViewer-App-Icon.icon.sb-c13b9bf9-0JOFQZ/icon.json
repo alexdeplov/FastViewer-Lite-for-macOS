@@ -1,6 +1,6 @@
 {
   "fill" : {
-    "automatic-gradient" : "srgb:0.45679,0.42792,0.32356,1.00000",
+    "automatic-gradient" : "srgb:0.17614,0.21035,0.21846,1.00000",
     "orientation" : {
       "start" : {
         "x" : 0.5,
@@ -17,13 +17,10 @@
       "blur-material" : null,
       "layers" : [
         {
-          "fill" : {
-            "automatic-gradient" : "srgb:1.00000,1.00000,1.00000,1.00000"
-          },
-          "image-name" : "Union.svg",
-          "name" : "Union",
+          "image-name" : "Flower.svg",
+          "name" : "Flower",
           "position" : {
-            "scale" : 5.3,
+            "scale" : 4.500000000000001,
             "translation-in-points" : [
               0,
               0

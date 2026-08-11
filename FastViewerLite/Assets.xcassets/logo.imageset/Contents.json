@@ -1,8 +1,14 @@
 {
   "images" : [
     {
-      "filename" : "Group 3(1).png",
-      "idiom" : "universal"
+      "filename" : "logo.png",
+      "idiom" : "mac",
+      "scale" : "1x"
+    },
+    {
+      "filename" : "logo@2x.png",
+      "idiom" : "mac",
+      "scale" : "2x"
     }
   ],
   "info" : {

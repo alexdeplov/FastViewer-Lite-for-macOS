@@ -25,7 +25,7 @@
 		A10000000000000000000010 /* DefaultFileAssociationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* DefaultFileAssociationManager.swift */; };
 		A10000000000000000000011 /* ImageLinkDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000017 /* ImageLinkDetector.swift */; };
 		A10000000000000000000013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000013 /* Assets.xcassets */; };
-		A10000000000000000000014 /* FastViewerFlower.icon in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* FastViewerFlower.icon */; };
+		A10000000000000000000014 /* FastViewer-App-Icon.icon in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000014 /* FastViewer-App-Icon.icon */; };
 		A10000000000000000000015 /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = A40000000000000000000001 /* Main.storyboard */; };
 		B10000000000000000000001 /* ImageLoaderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000001 /* ImageLoaderTests.swift */; };
 		B10000000000000000000002 /* ViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000002 /* ViewControllerTests.swift */; };
@@ -69,7 +69,7 @@
 		A20000000000000000000011 /* XPCImageLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XPCImageLoader.swift; sourceTree = "<group>"; };
 		A20000000000000000000012 /* ImageProcessingProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageProcessingProtocol.swift; sourceTree = "<group>"; };
 		A20000000000000000000013 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		A20000000000000000000014 /* FastViewerFlower.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = FastViewerFlower.icon; sourceTree = "<group>"; };
+		A20000000000000000000014 /* FastViewer-App-Icon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = "FastViewer-App-Icon.icon"; sourceTree = "<group>"; };
 		A20000000000000000000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A20000000000000000000016 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/Main.storyboard; sourceTree = "<group>"; };
 		A20000000000000000000017 /* ImageLinkDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageLinkDetector.swift; sourceTree = "<group>"; };
@@ -233,7 +233,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000000000013 /* Assets.xcassets */,
-				A20000000000000000000014 /* FastViewerFlower.icon */,
+				A20000000000000000000014 /* FastViewer-App-Icon.icon */,
 				A40000000000000000000001 /* Main.storyboard */,
 			);
 			name = Resources;
@@ -368,7 +368,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000000000000000000013 /* Assets.xcassets in Resources */,
-				A10000000000000000000014 /* FastViewerFlower.icon in Resources */,
+				A10000000000000000000014 /* FastViewer-App-Icon.icon in Resources */,
 				A10000000000000000000015 /* Main.storyboard in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -600,7 +600,7 @@
 		FA97D79D2EF4905800EE6799 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = FastViewerFlower;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "FastViewer-App-Icon";
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
@@ -623,7 +623,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = "3.3 ";
+				MARKETING_VERSION = 3.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.aleksandr.deplov.FastViewerLite;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -639,7 +639,7 @@
 		FA97D79E2EF4905800EE6799 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = FastViewerFlower;
+				ASSETCATALOG_COMPILER_APPICON_NAME = "FastViewer-App-Icon";
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = NO;
 				CODE_SIGN_STYLE = Automatic;
@@ -662,7 +662,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 12.0;
-				MARKETING_VERSION = "3.3 ";
+				MARKETING_VERSION = 3.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.aleksandr.deplov.FastViewerLite;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
