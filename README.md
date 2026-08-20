@@ -1,4 +1,5 @@
 ![FastViewer Lite for macOS](./image.jpg)
+![FastViewer Lite Settings](./settings.jpg)
 
 # FastViewer Lite
 
