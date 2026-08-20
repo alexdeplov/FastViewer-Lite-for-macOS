@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+
+# Xcode user-specific data
+*.xcuserstate
+xcuserdata/
+
+# Xcode build output
+DerivedData/
+build/
+*.xcarchive
+
+# Swift Package Manager (if used locally)
+.build/
+Package.resolved
+
+# Local signing and environment files
+*.mobileprovision
+*.provisionprofile
+.env
