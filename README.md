@@ -1,3 +1,5 @@
+![FastViewer Lite for macOS](./image.jpg)
+
 # FastViewer Lite
 
 FastViewer Lite is a lightweight native image viewer for macOS. It opens common image formats quickly and supports drag-and-drop, folder navigation, zooming and panning, image metadata, transparency previews, and common file actions.
