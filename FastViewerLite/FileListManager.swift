@@ -10,11 +10,6 @@ import Cocoa
 /// Manages the list of image files in a directory and the current file index
 class FileListManager {
 
-    /// Directory enumeration on a NAS can be expensive even when the image
-    /// data itself is already cached. Keep the discovered list briefly so
-    /// opening another image in the same folder does not repeat that request.
-    private static let directoryListCacheTTL: TimeInterval = 60
-
     /// Prepared file list result that can be committed later without mutating live state during discovery.
     struct PreparedFileList {
         let fileURLs: [URL]
@@ -26,14 +21,6 @@ class FileListManager {
 
     /// Current index in the file list
     var currentIndex: Int = 0
-
-    private struct CachedDirectoryList {
-        let createdAt: Date
-        let fileURLs: [URL]
-    }
-
-    private var directoryListCache: [String: CachedDirectoryList] = [:]
-    private let directoryListCacheLock = NSLock()
 
     /// Current file URL
     var currentFileURL: URL? {
@@ -70,16 +57,6 @@ class FileListManager {
     /// - Returns: Prepared file list if discovery succeeded, nil otherwise
     func prepareFiles(fromDirectoryContaining fileURL: URL) -> PreparedFileList? {
         let directoryURL = fileURL.deletingLastPathComponent()
-
-        let directoryCacheKey = directoryURL.resolvingSymlinksInPath().standardizedFileURL.path
-        if let cachedURLs = cachedFileURLs(forKey: directoryCacheKey),
-           let prepared = makePreparedFileList(cachedURLs, for: fileURL) {
-            PerformanceLog.shared.event(
-                "FILELIST",
-                "cache-hit directory=\(directoryURL.path) count=\(cachedURLs.count)"
-            )
-            return prepared
-        }
 
         // Start accessing security-scoped resources for both file and directory
         // This is critical for sandboxed apps when opening files via "Open with"
@@ -147,11 +124,17 @@ class FileListManager {
         )
         PerformanceLog.shared.snapshotDirectory(directoryURL, reason: "prepare")
 
-        storeCachedFileURLs(sortedFileURLs, forKey: directoryCacheKey)
-
         // Find the index of the current file
-        return makePreparedFileList(sortedFileURLs, for: fileURL)
+        let requestedPath = fileURL.resolvingSymlinksInPath().standardizedFileURL.path
+        if let index = sortedFileURLs.firstIndex(where: {
+            $0.resolvingSymlinksInPath().standardizedFileURL.path == requestedPath
+        }) {
+            return PreparedFileList(fileURLs: sortedFileURLs, currentIndex: index)
+        }
 
+        // If file not found in list, reset
+        // This can happen if the file extension is not in supportedExtensions
+        return nil
     }
 
     /// Applies a previously prepared file list to live navigation state.
@@ -212,20 +195,10 @@ class FileListManager {
         currentIndex = 0
     }
 
-    /// Invalidates the cached enumeration for a directory after a file
-    /// operation changes its contents.
-    func invalidateDirectoryCache(for directoryURL: URL) {
-        let key = directoryURL.resolvingSymlinksInPath().standardizedFileURL.path
-        directoryListCacheLock.lock()
-        directoryListCache.removeValue(forKey: key)
-        directoryListCacheLock.unlock()
-    }
-
     /// Reloads files from the given directory URL
     /// - Parameter directoryURL: The directory URL to load files from
     /// - Returns: True if files were loaded successfully, false otherwise
     func reloadFiles(fromDirectory directoryURL: URL) -> Bool {
-        invalidateDirectoryCache(for: directoryURL)
         // Start accessing security-scoped resource for directory
         // This is critical for sandboxed apps
         let directoryAccessing = directoryURL.startAccessingSecurityScopedResource()
@@ -264,36 +237,6 @@ class FileListManager {
     }
 
     // MARK: - Sorting
-
-    private func makePreparedFileList(_ fileURLs: [URL], for fileURL: URL) -> PreparedFileList? {
-        let requestedPath = fileURL.resolvingSymlinksInPath().standardizedFileURL.path
-        guard let index = fileURLs.firstIndex(where: {
-            $0.resolvingSymlinksInPath().standardizedFileURL.path == requestedPath
-        }) else {
-            return nil
-        }
-        return PreparedFileList(fileURLs: fileURLs, currentIndex: index)
-    }
-
-    private func cachedFileURLs(forKey key: String) -> [URL]? {
-        directoryListCacheLock.lock()
-        defer { directoryListCacheLock.unlock() }
-
-        guard let cached = directoryListCache[key] else {
-            return nil
-        }
-        guard Date().timeIntervalSince(cached.createdAt) < Self.directoryListCacheTTL else {
-            directoryListCache.removeValue(forKey: key)
-            return nil
-        }
-        return cached.fileURLs
-    }
-
-    private func storeCachedFileURLs(_ fileURLs: [URL], forKey key: String) {
-        directoryListCacheLock.lock()
-        directoryListCache[key] = CachedDirectoryList(createdAt: Date(), fileURLs: fileURLs)
-        directoryListCacheLock.unlock()
-    }
 
     /// Returns the URLResourceKeys needed for the given sort order
     private func resourceKeys(for sortOrder: FinderSortOrder) -> [URLResourceKey] {
