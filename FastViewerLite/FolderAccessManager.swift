@@ -18,7 +18,11 @@ class FolderAccessManager {
     
     static let shared = FolderAccessManager()
     
-    private init() {}
+    private static let directoryBookmarkKey = "FastViewer.AccessedDirectoryBookmark"
+
+    private init() {
+        restoreSavedDirectoryAccess()
+    }
     
     // MARK: - Properties
     
@@ -125,6 +129,16 @@ class FolderAccessManager {
                             self.stopAccessingCurrentDirectory()
                             self.activeDirectoryURL = selectedURL
                             self.isAccessingSecurityScopedResource = true
+
+                            // Keep access available after the application is
+                            // relaunched, including for files opened by double-click.
+                            if let bookmark = try? selectedURL.bookmarkData(
+                                options: [.withSecurityScope],
+                                includingResourceValuesForKeys: nil,
+                                relativeTo: nil
+                            ) {
+                                UserDefaults.standard.set(bookmark, forKey: Self.directoryBookmarkKey)
+                            }
                         }
                         
                         // Cache this directory as accessible
@@ -164,6 +178,31 @@ class FolderAccessManager {
         accessedDirectories.removeAll()
         stopAccessingCurrentDirectory()
     }
+
+    private func restoreSavedDirectoryAccess() {
+        guard let bookmark = UserDefaults.standard.data(forKey: Self.directoryBookmarkKey) else {
+            return
+        }
+
+        var isStale = false
+        guard let directoryURL = try? URL(
+            resolvingBookmarkData: bookmark,
+            options: [.withSecurityScope],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ), !isStale else {
+            UserDefaults.standard.removeObject(forKey: Self.directoryBookmarkKey)
+            return
+        }
+
+        guard directoryURL.startAccessingSecurityScopedResource() else {
+            return
+        }
+
+        activeDirectoryURL = directoryURL
+        isAccessingSecurityScopedResource = true
+        accessedDirectories.insert(directoryURL.path)
+    }
     
     /// Attempts to access a directory and its contents
     /// This is a convenience method that combines checking and requesting access
@@ -184,6 +223,5 @@ class FolderAccessManager {
         }
     }
 }
-
 
 
