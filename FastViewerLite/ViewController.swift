@@ -1270,14 +1270,6 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
                 }
 
                 guard let prepared else {
-                    // A file opened by double-click may grant access only to the
-                    // file itself.  That is not enough to enumerate its sibling
-                    // images, especially on a NAS.  Ask for directory access and
-                    // retry discovery after the user grants it.
-                    self.requestDirectoryAccessAndRetry(
-                        for: fileURL,
-                        generation: generation
-                    )
                     return
                 }
 
@@ -1289,26 +1281,6 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
                     self.preparedFileListForPendingDisplay = (fileURL, generation, prepared)
                 }
             }
-        }
-    }
-
-    /// Requests access to the containing folder when macOS granted access only
-    /// to the file received from Finder, then retries directory discovery.
-    private func requestDirectoryAccessAndRetry(for fileURL: URL, generation: Int) {
-        guard generation == fileListPreparationGeneration,
-              pendingImageURL == fileURL || displayedFileURL == fileURL else {
-            return
-        }
-
-        FolderAccessManager.shared.requestAccessToDirectory(containing: fileURL) { [weak self] granted in
-            guard let self,
-                  granted,
-                  generation == self.fileListPreparationGeneration,
-                  self.pendingImageURL == fileURL || self.displayedFileURL == fileURL else {
-                return
-            }
-
-            self.prepareFileListInBackground(for: fileURL, generation: generation)
         }
     }
 

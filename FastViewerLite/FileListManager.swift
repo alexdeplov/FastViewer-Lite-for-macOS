@@ -75,27 +75,13 @@ class FileListManager {
         let sortSettings = DSStoreReader.sortSettings(forDirectoryAt: directoryURL)
         let resourceKeys = resourceKeys(for: sortSettings.order)
 
-        // Get all files in the directory. Some NAS implementations reject one
-        // or more of the Finder metadata keys above even though directory
-        // enumeration itself is supported. Retry with names only in that case.
-        let fileURLs: [URL]
-        if let enumeratedURLs = try? FileManager.default.contentsOfDirectory(
+        // Get all files in the directory
+        guard let fileURLs = try? FileManager.default.contentsOfDirectory(
             at: directoryURL,
             includingPropertiesForKeys: resourceKeys,
             options: [.skipsHiddenFiles]
-        ) {
-            fileURLs = enumeratedURLs
-        } else if let fallbackURLs = try? FileManager.default.contentsOfDirectory(
-            at: directoryURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        ) {
-            PerformanceLog.shared.event(
-                "FILELIST",
-                "metadata-fallback directory=\(directoryURL.path)"
-            )
-            fileURLs = fallbackURLs
-        } else {
+        ) else {
+            // Log error for debugging (can be removed in production if desired)
             print("⚠️ Failed to load files from directory: \(directoryURL.path)")
             return nil
         }
@@ -107,17 +93,7 @@ class FileListManager {
             let pathExtension = url.pathExtension.lowercased()
             return supportedExtensions.contains(pathExtension)
         }.map { directoryURL.appendingPathComponent($0.lastPathComponent) }
-        var sortedFileURLs = sortFiles(filtered, by: sortSettings)
-
-        // Keep the opened item even if the NAS returned incomplete metadata or
-        // the file was created while the directory was being enumerated.
-        if !sortedFileURLs.contains(where: {
-            $0.resolvingSymlinksInPath().standardizedFileURL.path ==
-                fileURL.resolvingSymlinksInPath().standardizedFileURL.path
-        }) {
-            sortedFileURLs.append(fileURL)
-            sortedFileURLs = sortFiles(sortedFileURLs, by: sortSettings)
-        }
+        let sortedFileURLs = sortFiles(filtered, by: sortSettings)
         PerformanceLog.shared.event(
             "FILELIST",
             "directory=\(directoryURL.path) discovered=\(fileURLs.count) supported=\(sortedFileURLs.count) order=\(sortSettings.order) ascending=\(sortSettings.ascending ? 1 : 0)"
@@ -240,10 +216,7 @@ class FileListManager {
 
     /// Returns the URLResourceKeys needed for the given sort order
     private func resourceKeys(for sortOrder: FinderSortOrder) -> [URLResourceKey] {
-        // Do not request metadata that is not used by the selected sort.
-        // In particular, .isRegularFileKey can make a NAS enumerate every item
-        // one by one and leave the UI at its temporary 1/1 state for seconds.
-        var keys: [URLResourceKey] = []
+        var keys: [URLResourceKey] = [.isRegularFileKey]
         switch sortOrder {
         case .name:
             break
