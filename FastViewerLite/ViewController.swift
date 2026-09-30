@@ -3548,7 +3548,8 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     }
 
     private func prepareDraggedImage(for fileURL: URL, generation: Int) {
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard self != nil else { return }
             let cachedImage = ImageCacheManager.shared.getCachedImage(for: fileURL)
             let image = cachedImage ?? ImageLoader.shared.loadImage(from: fileURL)
 

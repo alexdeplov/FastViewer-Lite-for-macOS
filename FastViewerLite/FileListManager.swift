@@ -93,7 +93,8 @@ class FileListManager {
             let pathExtension = url.pathExtension.lowercased()
             return supportedExtensions.contains(pathExtension)
         }.map { directoryURL.appendingPathComponent($0.lastPathComponent) }
-        let sortedFileURLs = sortFiles(filtered, by: sortSettings)
+        let resourceValues = resourceValues(for: filtered, keys: resourceKeys)
+        let sortedFileURLs = sortFiles(filtered, by: sortSettings, resourceValues: resourceValues)
         PerformanceLog.shared.event(
             "FILELIST",
             "directory=\(directoryURL.path) discovered=\(fileURLs.count) supported=\(sortedFileURLs.count) order=\(sortSettings.order) ascending=\(sortSettings.ascending ? 1 : 0)"
@@ -205,7 +206,8 @@ class FileListManager {
             let pathExtension = url.pathExtension.lowercased()
             return supportedExtensions.contains(pathExtension)
         }.map { directoryURL.appendingPathComponent($0.lastPathComponent) }
-        self.fileURLs = sortFiles(filtered, by: sortSettings)
+        let resourceValues = resourceValues(for: filtered, keys: resourceKeys)
+        self.fileURLs = sortFiles(filtered, by: sortSettings, resourceValues: resourceValues)
 
         // Reset index to 0 (caller should adjust if needed)
         currentIndex = 0
@@ -234,8 +236,27 @@ class FileListManager {
         return keys
     }
 
-    /// Sorts files according to the given Finder sort settings (column + direction)
-    private func sortFiles(_ files: [URL], by settings: FinderSortSettings) -> [URL] {
+    private func resourceValues(
+        for files: [URL],
+        keys: [URLResourceKey]
+    ) -> [URL: URLResourceValues] {
+        let requestedKeys = Set(keys)
+        return Dictionary(uniqueKeysWithValues: files.compactMap { fileURL in
+            guard let values = try? fileURL.resourceValues(forKeys: requestedKeys) else {
+                return nil
+            }
+            return (fileURL, values)
+        })
+    }
+
+    /// Sorts files according to the given Finder sort settings (column + direction).
+    /// Resource metadata is supplied by the directory discovery pass so sorting
+    /// does not perform another filesystem lookup for every file.
+    private func sortFiles(
+        _ files: [URL],
+        by settings: FinderSortSettings,
+        resourceValues: [URL: URLResourceValues]
+    ) -> [URL] {
         let asc = settings.ascending
 
         switch settings.order {
@@ -250,7 +271,7 @@ class FileListManager {
 
         case .dateModified:
             let values = files.map {
-                ($0, (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast)
+                ($0, resourceValues[$0]?.contentModificationDate ?? .distantPast)
             }
             return values.sorted {
                 $0.1 == $1.1 ? $0.0.path < $1.0.path : (asc ? $0.1 < $1.1 : $0.1 > $1.1)
@@ -258,7 +279,7 @@ class FileListManager {
 
         case .dateCreated:
             let values = files.map {
-                ($0, (try? $0.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast)
+                ($0, resourceValues[$0]?.creationDate ?? .distantPast)
             }
             return values.sorted {
                 $0.1 == $1.1 ? $0.0.path < $1.0.path : (asc ? $0.1 < $1.1 : $0.1 > $1.1)
@@ -266,7 +287,7 @@ class FileListManager {
 
         case .dateAdded:
             let values = files.map {
-                ($0, (try? $0.resourceValues(forKeys: [.addedToDirectoryDateKey]))?.addedToDirectoryDate ?? .distantPast)
+                ($0, resourceValues[$0]?.addedToDirectoryDate ?? .distantPast)
             }
             return values.sorted {
                 $0.1 == $1.1 ? $0.0.path < $1.0.path : (asc ? $0.1 < $1.1 : $0.1 > $1.1)
@@ -274,7 +295,7 @@ class FileListManager {
 
         case .size:
             let values = files.map {
-                ($0, (try? $0.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+                ($0, resourceValues[$0]?.fileSize ?? 0)
             }
             return values.sorted {
                 $0.1 == $1.1 ? $0.0.path < $1.0.path : (asc ? $0.1 < $1.1 : $0.1 > $1.1)

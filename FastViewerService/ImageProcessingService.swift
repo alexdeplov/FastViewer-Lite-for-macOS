@@ -28,7 +28,7 @@ class ImageProcessingService: NSObject, ImageProcessingProtocol {
     private let prefetchQueue: OperationQueue
     
     /// Serial queue for cache synchronization
-    private let prefetchSyncQueue: DispatchSerialQueue
+    private let prefetchSyncQueue: DispatchQueue
     
     /// Track last prefetch request to avoid duplicates
     private var lastPrefetchIndex: Int?
@@ -36,6 +36,12 @@ class ImageProcessingService: NSObject, ImageProcessingProtocol {
     
     /// Maximum cache size
     private let maxCacheCount = 200
+
+    /// Image quality is part of the cache identity. Without this, a 1024px
+    /// rapid-navigation preview could be returned for a later 4000px request.
+    private func imageCacheKey(for fileURL: URL, maxSize: Int) -> NSURL {
+        NSURL(string: "\(fileURL.standardizedFileURL.absoluteString)#maxSize=\(maxSize)")!
+    }
     
     override init() {
         // Initialize cache with count and memory limits
@@ -69,7 +75,8 @@ class ImageProcessingService: NSObject, ImageProcessingProtocol {
     
     func loadImage(from fileURL: URL, maxSize: Int, reply: @escaping (Data?) -> Void) {
         // Check cache first
-        if let cachedImage = imageCache.object(forKey: fileURL as NSURL) {
+        let cacheKey = imageCacheKey(for: fileURL, maxSize: maxSize)
+        if let cachedImage = imageCache.object(forKey: cacheKey) {
             reply(cachedImage.tiffRepresentation)
             return
         }
@@ -81,7 +88,7 @@ class ImageProcessingService: NSObject, ImageProcessingProtocol {
         }
         
         // Cache the loaded image
-        imageCache.setObject(image, forKey: fileURL as NSURL)
+        imageCache.setObject(image, forKey: cacheKey)
         
         // Return as data
         reply(image.tiffRepresentation)
@@ -89,7 +96,8 @@ class ImageProcessingService: NSObject, ImageProcessingProtocol {
     
     func loadImageAsync(from fileURL: URL, maxSize: Int, reply: @escaping (Data?) -> Void) {
         // Check cache first for instant response
-        if let cachedImage = imageCache.object(forKey: fileURL as NSURL) {
+        let cacheKey = imageCacheKey(for: fileURL, maxSize: maxSize)
+        if let cachedImage = imageCache.object(forKey: cacheKey) {
             reply(cachedImage.tiffRepresentation)
             return
         }
@@ -107,7 +115,7 @@ class ImageProcessingService: NSObject, ImageProcessingProtocol {
             }
             
             // Cache the loaded image
-            self.imageCache.setObject(image, forKey: fileURL as NSURL)
+            self.imageCache.setObject(image, forKey: cacheKey)
             
             reply(image.tiffRepresentation)
         }
@@ -177,7 +185,7 @@ class ImageProcessingService: NSObject, ImageProcessingProtocol {
                 if offset <= prefetchBefore {
                     let beforeIndex = currentIndex - offset
                     if beforeIndex >= 0 && beforeIndex < fileURLs.count {
-                        if self.imageCache.object(forKey: fileURLs[beforeIndex] as NSURL) == nil {
+                        if self.imageCache.object(forKey: self.imageCacheKey(for: fileURLs[beforeIndex], maxSize: 4000)) == nil {
                             indicesToPrefetch.append(beforeIndex)
                         }
                     }
@@ -187,7 +195,7 @@ class ImageProcessingService: NSObject, ImageProcessingProtocol {
                 if offset <= prefetchAfter {
                     let afterIndex = currentIndex + offset
                     if afterIndex >= 0 && afterIndex < fileURLs.count {
-                        if self.imageCache.object(forKey: fileURLs[afterIndex] as NSURL) == nil {
+                        if self.imageCache.object(forKey: self.imageCacheKey(for: fileURLs[afterIndex], maxSize: 4000)) == nil {
                             indicesToPrefetch.append(afterIndex)
                         }
                     }
@@ -207,7 +215,10 @@ class ImageProcessingService: NSObject, ImageProcessingProtocol {
                     
                     // Load image
                     if let image = self.loadImageInternal(from: fileURL, maxSize: 4000) {
-                        self.imageCache.setObject(image, forKey: fileURL as NSURL)
+                        self.imageCache.setObject(
+                            image,
+                            forKey: self.imageCacheKey(for: fileURL, maxSize: 4000)
+                        )
                     }
                 }
                 

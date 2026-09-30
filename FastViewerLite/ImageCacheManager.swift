@@ -42,6 +42,9 @@ class ImageCacheManager {
     private var cachedImageKeys: Set<NSString> = []
     private var cachedAverageColorKeys: Set<NSString> = []
     private var cachedImageCosts: [NSString: Int] = [:]
+    /// Running total for diagnostics. Keeping this counter avoids walking every
+    /// cached key while a navigation gesture is reading the cache.
+    private var cachedImageCostTotal: Int = 0
     
     /// Active prefetch work keyed by URL. Overlapping requests are retained.
     private var prefetchOperations: [String: Operation] = [:]
@@ -110,18 +113,16 @@ class ImageCacheManager {
     /// - Parameter url: The file URL
     /// - Returns: Cached image if available, nil otherwise
     func getCachedImage(for url: URL, maxSize: Int = 4000) -> NSImage? {
-        let image = imageCache.object(forKey: Self.cacheKey(for: url, maxSize: maxSize))
-        PerformanceLog.shared.event(
-            "CACHE",
-            "lookup file=\(url.lastPathComponent) maxSize=\(maxSize) hit=\(image == nil ? 0 : 1) \(diagnosticSummary())"
-        )
-        return image
+        // This is on the foreground display path and can run for every scroll
+        // event. Do not take the bookkeeping lock or reduce the entire cache
+        // just to emit optional diagnostics.
+        return imageCache.object(forKey: Self.cacheKey(for: url, maxSize: maxSize))
     }
 
     func diagnosticSummary() -> String {
         cacheStateLock.lock()
         let count = cachedImageKeys.count
-        let cost = cachedImageCosts.values.reduce(0, +)
+        let cost = cachedImageCostTotal
         cacheStateLock.unlock()
         return "cacheCount=\(count) cacheCost=\(cost)"
     }
@@ -185,7 +186,7 @@ class ImageCacheManager {
                 for key in staleKeys[batchStart..<batchEnd] {
                     imageCache.removeObject(forKey: key)
                     cachedImageKeys.remove(key)
-                    cachedImageCosts.removeValue(forKey: key)
+                    cachedImageCostTotal -= cachedImageCosts.removeValue(forKey: key) ?? 0
                 }
                 cacheStateLock.unlock()
             }
@@ -225,6 +226,7 @@ class ImageCacheManager {
             cacheStateLock.unlock()
             return
         }
+        cachedImageCostTotal += cost - (cachedImageCosts[key] ?? 0)
         imageCache.setObject(image, forKey: key, cost: cost)
         cachedImageKeys.insert(key)
         cachedImageCosts[key] = cost
@@ -493,6 +495,7 @@ class ImageCacheManager {
         cachedImageKeys.removeAll()
         cachedAverageColorKeys.removeAll()
         cachedImageCosts.removeAll()
+        cachedImageCostTotal = 0
         cacheStateLock.unlock()
 
     }
@@ -537,7 +540,7 @@ class ImageCacheManager {
         for key in imageKeys {
             imageCache.removeObject(forKey: key)
             cachedImageKeys.remove(key)
-            cachedImageCosts.removeValue(forKey: key)
+            cachedImageCostTotal -= cachedImageCosts.removeValue(forKey: key) ?? 0
         }
         averageColorCache.removeObject(forKey: colorKey)
         cachedAverageColorKeys.remove(colorKey)
