@@ -28,7 +28,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         ) ?? NSColor.windowBackgroundColor
     }
 
-    internal var imageView: NSImageView!
+    internal var imageView: DraggableImageView!
     internal let fileListManager = FileListManager()
     private let imageLoader = ImageLoader.shared
     internal private(set) var displayedFileURL: URL?
@@ -164,10 +164,19 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     // Zoom state per image
     private var imageZoomScales: [URL: CGFloat] = [:]
     private var imagePanOffsets: [URL: NSPoint] = [:]
+    private struct ZoomFocus {
+        let imagePoint: NSPoint
+        let viewportPoint: NSPoint
+    }
+    private var imageZoomOrigins: [URL: ZoomFocus] = [:]
+    private var dragAnchorImageURLs: Set<URL> = []
+    private var zoomViewportBaseSizes: [URL: NSSize] = [:]
+    private var zoomViewportSizes: [URL: NSSize] = [:]
+    private var zoomViewportScales: [URL: CGFloat] = [:]
     private var actualSizeImageURLs: Set<URL> = []
     private var originalImagePixelSizes: [URL: NSSize] = [:]
     private let zoomStep: CGFloat = 1.5 // 50% zoom per step
-    private let minZoom: CGFloat = 0.25
+    private let minZoom: CGFloat = 1.0
     private let maxZoom: CGFloat = 10.0
 
     // Panning state
@@ -578,8 +587,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         // Keep menu command availability in sync with the current image/file state
         updateAppMenuStates()
 
-        // Reset window to initial size (600x400)
-        resizeWindow(to: NSSize(width: 600, height: 400), animated: true)
+        restoreWindowSizePreset(animated: true)
     }
 
     private func showEmptyStateUI() {
@@ -600,8 +608,12 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     /// - Parameters:
     ///   - size: The target size for the window
     ///   - animated: Whether to animate the resize
-    internal func resizeWindow(to size: NSSize, animated: Bool) {
+    internal func resizeWindow(to size: NSSize, animated: Bool, rememberPreset: Bool = true) {
         guard let window = view.window else { return }
+        if rememberPreset {
+            if size == NSSize(width: 600, height: 400) { rememberWindowSizePreset(.small) }
+            else if size == NSSize(width: 900, height: 600) { rememberWindowSizePreset(.medium) }
+        }
 
         // Reset zoom to 1.0 when changing window preset
         resetZoomToInitial()
@@ -647,6 +659,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     internal func resizeWindowToAlmostMaximized(animated: Bool) {
         guard let window = view.window,
               let screen = window.screen ?? NSScreen.main else { return }
+        rememberWindowSizePreset(.large)
 
         // Reset zoom to 1.0 when changing window preset
         resetZoomToInitial()
@@ -690,6 +703,25 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             if let image = imageView.image {
                 updateImageScaling(for: image)
             }
+        }
+    }
+
+    private func rememberWindowSizePreset(_ preset: WindowSizePreset) {
+        SettingsManager.shared.windowSizePreset = preset
+        if let delegate = NSApp.delegate as? AppDelegate, delegate.window === view.window {
+            delegate.updateMenuStates()
+        }
+    }
+
+    internal func restoreWindowSizePreset(animated: Bool) {
+        if SettingsManager.shared.autoResizeToImageSize {
+            resizeWindow(to: NSSize(width: 600, height: 400), animated: animated, rememberPreset: false)
+            return
+        }
+        switch SettingsManager.shared.windowSizePreset {
+        case .small: resizeWindow(to: NSSize(width: 600, height: 400), animated: animated)
+        case .medium: resizeWindow(to: NSSize(width: 900, height: 600), animated: animated)
+        case .large: resizeWindowToAlmostMaximized(animated: animated)
         }
     }
 
@@ -1142,8 +1174,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         // Scale image to fit within the view bounds proportionally
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.imageAlignment = .alignCenter
-        imageView.imageFrameStyle = .none
-        // Enable layer for zoom transforms
+        // The canvas layer remains at window size; Metal applies image geometry.
         imageView.wantsLayer = true
         // Enable animation playback for animated images (WebP, GIF)
         // No effect on static images
@@ -1162,9 +1193,6 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             imageView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
 
-        // Set the anchor point to the center (0.5, 0.5) after constraints are active
-        // This ensures zoom happens from the center of the view
-        // We'll update the position in viewDidLayout or when applying transforms
     }
 
     /// Sets up the logo image view centered on screen (shown when no file is open)
@@ -1311,7 +1339,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         imageLinkDetectionOperation?.cancel()
         imageLinkDetectionOperation = nil
         detectedImageLinks = []
-        (imageView as? DraggableImageView)?.hideLinkHoverBorder()
+        imageView?.hideLinkHoverBorder()
         clearLinkCursor()
     }
 
@@ -1411,6 +1439,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         if currentImageLoadOperation != nil {
             PerformanceLog.shared.event("DISPLAY", "cancel-previous reason=new-request file=\(fileURL.lastPathComponent)")
         }
+        imageView.beginImageTransition()
         currentImageLoadOperation?.cancel()
         currentImageLoadOperation = nil
         imageQualityLoadOperation?.cancel()
@@ -1526,6 +1555,12 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             preparedFileListForPendingDisplay = nil
             committedPreparedFileList = true
         }
+        if displayedFileURL != fileURL {
+            // Reset model state only when navigation commits. The old Metal
+            // frame stays frozen until the new photo's texture is ready.
+            if let previous = displayedFileURL { clearZoomState(for: previous) }
+            clearZoomState(for: fileURL)
+        }
         displayedFileURL = fileURL
         cancelImageLinkDetection()
         PerformanceLog.shared.event(
@@ -1591,28 +1626,27 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             return
         }
 
-        let preferredSize = preferredDecodeMaxSize(zoomScale: getCurrentZoomScale())
         let originalSize = cachedOriginalPixelSize(for: fileURL, fallbackImage: image)
         let targetSize = min(
             12_000,
-            max(preferredSize, Int(max(originalSize.width, originalSize.height).rounded(.up)))
+            max(1, Int(max(originalSize.width, originalSize.height).rounded(.up)))
         )
         guard max(cgImage.width, cgImage.height) < targetSize else {
             return
         }
 
-        imageQualityLoadOperation?.cancel()
+        guard imageQualityLoadOperation == nil else { return }
+        let generation = imageLoadGeneration
         imageQualityLoadOperation = imageLoader.loadImageAsync(
             from: fileURL,
             maxSize: targetSize
         ) { [weak self] sharperImage in
-            guard let self,
-                  self.displayedFileURL == fileURL,
-                  let sharperImage else {
+            guard let self, self.displayedFileURL == fileURL, self.imageLoadGeneration == generation else {
                 return
             }
             self.imageQualityLoadOperation = nil
-            self.imageView.image = sharperImage
+            guard let sharperImage else { return }
+            self.imageView.setImage(sharperImage, logicalSize: self.cachedOriginalPixelSize(for: fileURL, fallbackImage: sharperImage))
             self.updateImageScaling(for: sharperImage)
             self.imageView.needsDisplay = true
         }
@@ -1623,6 +1657,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             return
         }
 
+        imageView.endImageTransition()
         hideLoadingOverlay()
         #if DEBUG
         NSLog("[ScrollDiagnostic] load failed: %@", fileURL.lastPathComponent)
@@ -1688,6 +1723,8 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         for fileURL: URL,
         keepingScrollPointerAt screenPoint: NSPoint?
     ) {
+        // Freeze the old photo/camera before resizing can synchronously draw.
+        imageView.setImage(image, logicalSize: cachedOriginalPixelSize(for: fileURL, fallbackImage: image))
         let shouldAutoResize = SettingsManager.shared.autoResizeToImageSize
         if shouldAutoResize {
             resizeWindowToImageSizeForFile(
@@ -1700,7 +1737,6 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         // Set image without changing its size property to prevent window resizing
         // Adjust scaling based on image size vs view size
         // Note: Zoom scale will be applied in updateImageScaling if stored
-        imageView.image = image
         updateAppMenuStates()
         imageView.needsDisplay = true
         logoImageView?.isHidden = true
@@ -1710,7 +1746,6 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         if shouldAutoResize {
             autoResizeWorkItem?.cancel()
             autoResizeWorkItem = nil
-            resetZoomForFile(fileURL)
             // The rapid-navigation image is intentionally decoded at 1024 px,
             // while the window is already sized from the original file metadata.
             // Scale that preview into the final frame immediately so the later
@@ -2237,12 +2272,14 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         let positionText: String
 
         if let filePosition, fileCount > 0 {
-            positionText = " – \(filePosition)/\(fileCount)"
+            positionText = " - \(filePosition)/\(fileCount)"
         } else {
             positionText = ""
         }
 
-        view.window?.title = "FastViewer Lite — \(filename)\(positionText)"
+        let scale = getCurrentZoomScale()
+        let zoomText = abs(scale - 1) > 0.00001 ? " \(Int((scale * 100).rounded()))%" : ""
+        view.window?.title = "FastViewer Lite - \(filename)\(zoomText)\(positionText)"
     }
 
     /// Updates the title and keeps the obsolete corner pill hidden.
@@ -2268,7 +2305,15 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     /// Also applies stored zoom scale if available
     /// - Parameter image: The image to check
     internal func updateImageScaling(for image: NSImage) {
-        let imageSize = image.size
+        imageView.performGeometryUpdates {
+            reconcileViewport(for: image)
+            updateImageScalingState(for: image)
+        }
+        updateWindowTitle(with: displayedFileURL)
+    }
+
+    private func updateImageScalingState(for image: NSImage) {
+        let imageSize = logicalPixelSize(for: image)
         // Use view's bounds (imageView fills the entire view)
         let viewSize = view.bounds.size
 
@@ -2296,12 +2341,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             let widthMatches = abs(imageSize.width - viewSize.width) < sizeTolerance
             let heightMatches = abs(imageSize.height - viewSize.height) < sizeTolerance
 
-            if shouldFillAutoResizedFrameWithPreview(image) {
-                // A downsampled preview represents the full-size file. The window
-                // already has the final aspect/size, so allow only this preview to
-                // scale up. Genuine small images retain their pixel-sized display.
-                imageView.imageScaling = .scaleProportionallyUpOrDown
-            } else if widthMatches && heightMatches {
+            if widthMatches && heightMatches {
                 // View size exactly matches image size - show at 100% scale
                 // .scaleProportionallyDown won't scale up, so it displays at original size
                 imageView.imageScaling = .scaleProportionallyDown
@@ -2315,8 +2355,9 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             }
         }
 
-        if let fileURL = displayedFileURL,
-           actualSizeImageURLs.contains(fileURL) {
+        // A drag offset valid at the previous zoom can expose empty canvas
+        // after zooming out. Clamp it at every step, before presenting the frame.
+        if let fileURL = displayedFileURL {
             let currentOffset = imagePanOffsets[fileURL] ?? .zero
             let constrainedOffset = constrainPanOffset(
                 currentOffset,
@@ -2331,23 +2372,6 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         // Update cursor when image scaling changes
         refreshCursorForCurrentMouseLocation()
         refreshBackgroundForCurrentImage()
-    }
-
-    private func shouldFillAutoResizedFrameWithPreview(_ image: NSImage) -> Bool {
-        guard SettingsManager.shared.autoResizeToImageSize,
-              let fileURL = displayedFileURL,
-              let decodedImage = image.cgImage(
-                forProposedRect: nil,
-                context: nil,
-                hints: nil
-              ) else {
-            return false
-        }
-
-        let originalSize = cachedOriginalPixelSize(for: fileURL, fallbackImage: image)
-        let tolerance: CGFloat = 1
-        return originalSize.width > CGFloat(decodedImage.width) + tolerance ||
-            originalSize.height > CGFloat(decodedImage.height) + tolerance
     }
 
     // MARK: - Zoom Functionality
@@ -2373,6 +2397,105 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         }
         actualSizeImageURLs.remove(fileURL)
         imageZoomScales[fileURL] = scale
+    }
+
+    private func zoomPointerLocation() -> NSPoint {
+        guard let window = view.window else { return NSPoint(x: view.bounds.midX, y: view.bounds.midY) }
+        let point = imageView.convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        return imageView.bounds.contains(point) ? point : NSPoint(x: view.bounds.midX, y: view.bounds.midY)
+    }
+
+    private func zoomFocus(at point: NSPoint) -> ZoomFocus? {
+        guard let image = imageView.image, let base = getBaseDisplayedImageSize(for: image),
+              base.width > 0, base.height > 0, view.bounds.width > 0, view.bounds.height > 0 else { return nil }
+        let scale = getCurrentZoomScale()
+        let offset = getCurrentPanOffset()
+        let imageCenter = NSPoint(x: view.bounds.midX + offset.x, y: view.bounds.midY + offset.y)
+        let point = NSPoint(
+            x: min(max(point.x, imageCenter.x - base.width * scale / 2), imageCenter.x + base.width * scale / 2),
+            y: min(max(point.y, imageCenter.y - base.height * scale / 2), imageCenter.y + base.height * scale / 2)
+        )
+        return ZoomFocus(
+            imagePoint: NSPoint(x: 0.5 + (point.x - view.bounds.midX - offset.x) / (base.width * scale),
+                                y: 0.5 + (point.y - view.bounds.midY - offset.y) / (base.height * scale)),
+            viewportPoint: NSPoint(x: point.x / view.bounds.width, y: point.y / view.bounds.height)
+        )
+    }
+
+    private func focusForZoom(from oldScale: CGFloat, to newScale: CGFloat, at point: NSPoint) -> ZoomFocus? {
+        guard let file = displayedFileURL else { return nil }
+        if dragAnchorImageURLs.contains(file), let focus = imageZoomOrigins[file] { return focus }
+        if newScale > oldScale {
+            let focus = zoomFocus(at: point)
+            imageZoomOrigins[file] = focus
+            return focus
+        }
+        return imageZoomOrigins[file] ?? zoomFocus(at: point)
+    }
+
+    private func logicalPixelSize(for image: NSImage) -> NSSize {
+        guard let file = displayedFileURL else { return image.size }
+        return cachedOriginalPixelSize(for: file, fallbackImage: image)
+    }
+
+    /// Preserve the viewed image coordinates, then project the active anchor
+    /// into the new viewport. This also runs on return to an image resized away.
+    private func reconcileViewport(for image: NSImage) {
+        guard let file = displayedFileURL, let base = getBaseDisplayedImageSize(for: image) else { return }
+        let size = view.bounds.size
+        defer {
+            zoomViewportSizes[file] = size
+            zoomViewportBaseSizes[file] = base
+            zoomViewportScales[file] = getCurrentZoomScale()
+        }
+        guard let oldBase = zoomViewportBaseSizes[file], let oldSize = zoomViewportSizes[file],
+              (oldBase != base || oldSize != size), oldBase.width > 0, oldBase.height > 0 else { return }
+        let oldOffset = getCurrentPanOffset()
+        let scale = getCurrentZoomScale()
+        let oldScale = zoomViewportScales[file] ?? scale
+        let offset = constrainPanOffset(NSPoint(x: oldOffset.x * base.width * scale / (oldBase.width * oldScale),
+                                                y: oldOffset.y * base.height * scale / (oldBase.height * oldScale)), zoomScale: scale)
+        storePanOffset(offset)
+        if let focus = imageZoomOrigins[file] {
+            imageZoomOrigins[file] = ZoomFocus(imagePoint: focus.imagePoint, viewportPoint: NSPoint(
+                x: 0.5 + ((focus.imagePoint.x - 0.5) * base.width * scale + offset.x) / size.width,
+                y: 0.5 + ((focus.imagePoint.y - 0.5) * base.height * scale + offset.y) / size.height))
+        }
+    }
+
+    private func recordDragAnchor(at point: NSPoint) {
+        guard let file = displayedFileURL else { return }
+        let point = NSPoint(x: min(max(point.x, 0), view.bounds.width),
+                            y: min(max(point.y, 0), view.bounds.height))
+        imageZoomOrigins[file] = zoomFocus(at: point)
+        dragAnchorImageURLs.insert(file)
+    }
+
+    private func restoreZoomFocus(_ focus: ZoomFocus?) {
+        guard let focus, let image = imageView.image,
+              let base = getBaseDisplayedImageSize(for: image) else { return }
+        let scale = getCurrentZoomScale()
+        let offset = NSPoint(
+            x: focus.viewportPoint.x * view.bounds.width - view.bounds.midX - (focus.imagePoint.x - 0.5) * base.width * scale,
+            y: focus.viewportPoint.y * view.bounds.height - view.bounds.midY - (focus.imagePoint.y - 0.5) * base.height * scale
+        )
+        let constrained = constrainPanOffset(offset, zoomScale: scale)
+        storePanOffset(constrained)
+    }
+
+    /// Both directions use the active focus. A drag explicitly replaces it;
+    /// pointer movement alone never changes the anchor used by zoom-out.
+    internal func changeZoom(to scale: CGFloat, at point: NSPoint) {
+        guard let image = imageView.image, scale != getCurrentZoomScale() else { return }
+        updateImageScaling(for: image)
+        let focus = focusForZoom(from: getCurrentZoomScale(), to: scale, at: point)
+        storeZoomScale(scale)
+        restoreZoomFocus(focus)
+        updateImageScaling(for: image)
+        if scale == 1, let file = displayedFileURL {
+            imageZoomOrigins.removeValue(forKey: file)
+            dragAnchorImageURLs.remove(file)
+        }
     }
 
     /// Returns the transform needed for one image pixel to occupy one physical display pixel.
@@ -2456,13 +2579,15 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         return nil
     }
 
-    /// Resets the zoom scale to 1.0 for a specific file URL and current window size
-    /// Also clears the pan offset
-    /// - Parameter fileURL: The file URL to reset zoom for
-    private func resetZoomForFile(_ fileURL: URL) {
+    private func clearZoomState(for fileURL: URL) {
         actualSizeImageURLs.remove(fileURL)
-        imageZoomScales[fileURL] = 1.0
-        imagePanOffsets[fileURL] = .zero
+        imageZoomOrigins.removeValue(forKey: fileURL)
+        dragAnchorImageURLs.remove(fileURL)
+        imageZoomScales.removeValue(forKey: fileURL)
+        imagePanOffsets.removeValue(forKey: fileURL)
+        zoomViewportSizes.removeValue(forKey: fileURL)
+        zoomViewportBaseSizes.removeValue(forKey: fileURL)
+        zoomViewportScales.removeValue(forKey: fileURL)
     }
 
     /// Resets zoom to initial state (1.0) for the current file
@@ -2472,9 +2597,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         guard let fileURL = displayedFileURL else { return }
 
         // Clear zoom/pan state for this file
-        actualSizeImageURLs.remove(fileURL)
-        imageZoomScales.removeValue(forKey: fileURL)
-        imagePanOffsets.removeValue(forKey: fileURL)
+        clearZoomState(for: fileURL)
 
         // Reset the zoom transform visually
         resetZoomTransform()
@@ -2505,61 +2628,23 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     /// Also applies pan offset if available
     /// - Parameter scale: The zoom scale to apply
     private func applyZoomTransform(scale: CGFloat) {
-        // Ensure image view has a layer (should already be set in setupImageView)
-        imageView.wantsLayer = true
-        guard let layer = imageView.layer else { return }
-
-        // Set the anchor point to center (0.5, 0.5) to ensure zoom happens from the center
-        layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-
-        // Because Auto Layout is used, we must re-center the anchor point
-        // to the middle of the view bounds so the transform doesn't "jump"
-        let x = imageView.bounds.midX
-        let y = imageView.bounds.midY
-        layer.position = CGPoint(x: x, y: y)
-
-        // When zoomed in (scale > 1.0), use nearest-neighbor filtering to show pixel grid
-        // When zoomed out or at normal size, use linear filtering for smooth interpolation
-        let isActualSize = displayedFileURL.map(actualSizeImageURLs.contains) ?? false
-        if scale > 1.0 || isActualSize {
-            layer.magnificationFilter = .nearest
-            layer.minificationFilter = .nearest
-        } else {
-            layer.magnificationFilter = .linear
-            layer.minificationFilter = .linear
+        imageView.performGeometryUpdates {
+            // Fitted images use Linear. Only magnification enables pixel sampling.
+            imageView.usesNearestNeighbor = scale > 1
+            imageView.zoomScale = scale
+            imageView.panOffset = scale != 1 ? getCurrentPanOffset() : .zero
         }
-
-        // Get pan offset if zoomed
-        let panOffset = scale != 1.0 ? getCurrentPanOffset() : .zero
-
-        // Apply scale transform from the center, then translate for panning
-        var transform = CATransform3DMakeScale(scale, scale, 1.0)
-        if panOffset != .zero {
-            transform = CATransform3DTranslate(transform, panOffset.x, panOffset.y, 0)
-        }
-        layer.transform = transform
+        if scale > 1 { requestSharperImageIfNeeded() }
     }
 
-    /// Resets the zoom transform to identity
+    /// Reset image geometry without transforming the Metal viewport.
     private func resetZoomTransform() {
-        guard let layer = imageView.layer else { return }
-
-        // Reset transform to identity
-        layer.transform = CATransform3DIdentity
-
-        // Reset anchor point and position to defaults
-        layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-        let x = imageView.bounds.midX
-        let y = imageView.bounds.midY
-        layer.position = CGPoint(x: x, y: y)
-
-        // Reset to smooth interpolation when not zoomed
-        layer.magnificationFilter = .linear
-        layer.minificationFilter = .linear
-
-        // Clear pan offset when resetting zoom
+        imageView.zoomScale = 1
+        imageView.panOffset = .zero
+        imageView.usesNearestNeighbor = false
         if let fileURL = displayedFileURL {
             imagePanOffsets[fileURL] = .zero
+            updateWindowTitle(with: fileURL)
         }
     }
 
@@ -2582,8 +2667,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         )
 
         if newZoom != currentZoom {
-            storeZoomScale(newZoom)
-            updateImageScaling(for: image)
+            changeZoom(to: newZoom, at: zoomPointerLocation())
             // Update cursor when zoom changes
             refreshCursorForCurrentMouseLocation()
         }
@@ -2602,11 +2686,10 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
 
         // Standard mode: just apply zoom transform
         let currentZoom = getCurrentZoomScale()
-        let newZoom = max(currentZoom / zoomStep, minZoom)
+        let newZoom = min(currentZoom, max(currentZoom / zoomStep, minZoom))
 
         if newZoom != currentZoom {
-            storeZoomScale(newZoom)
-            updateImageScaling(for: image)
+            changeZoom(to: newZoom, at: zoomPointerLocation())
             // Update cursor when zoom changes
             refreshCursorForCurrentMouseLocation()
         }
@@ -2758,6 +2841,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         }
 
         let newFrame = NSRect(origin: newOrigin, size: newWindowSize)
+        let file = displayedFileURL
 
         if animated {
             NSAnimationContext.runAnimationGroup({ context in
@@ -2765,7 +2849,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
                 context.allowsImplicitAnimation = true
                 window.animator().setFrame(newFrame, display: true)
             }, completionHandler: {
-                if let image = self.imageView.image {
+                if self.displayedFileURL == file, let image = self.imageView.image {
                     self.updateImageScaling(for: image)
                 }
                 self.refreshCursorForCurrentMouseLocation()
@@ -2784,7 +2868,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     private func zoomCmd4Mode(image: NSImage, factor: CGFloat) {
         let tolerance: CGFloat = 0.001
         let currentEffectiveScale = getCurrentCmd4EffectiveScale()
-        let targetEffectiveScale = min(max(currentEffectiveScale * factor, minZoom), maxZoom)
+        let targetEffectiveScale = min(max(currentEffectiveScale * factor, min(currentEffectiveScale, minZoom)), maxZoom)
 
         if abs(targetEffectiveScale - currentEffectiveScale) < tolerance {
             return
@@ -2801,7 +2885,13 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             windowScale: targetWindowScale
         )
 
+        let focus = focusForZoom(from: currentEffectiveScale, to: targetEffectiveScale, at: zoomPointerLocation())
         storeZoomScale(targetTransformScale)
+        restoreZoomFocus(focus)
+        if targetEffectiveScale == 1, let file = displayedFileURL {
+            imageZoomOrigins.removeValue(forKey: file)
+            dragAnchorImageURLs.remove(file)
+        }
 
         if abs(targetWindowScale - currentWindowScale) < tolerance {
             updateImageScaling(for: image)
@@ -2839,6 +2929,8 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             for: fileURL,
             fallbackImage: image
         )
+        imageZoomOrigins.removeValue(forKey: fileURL)
+        dragAnchorImageURLs.remove(fileURL)
         actualSizeImageURLs.insert(fileURL)
         imageZoomScales.removeValue(forKey: fileURL)
         imagePanOffsets[fileURL] = .zero
@@ -2860,13 +2952,6 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
 
     override func viewDidLayout() {
         super.viewDidLayout()
-
-        // Update layer position when view layout changes (important for anchor point)
-        if let layer = imageView.layer, layer.anchorPoint == CGPoint(x: 0.5, y: 0.5) {
-            let x = imageView.bounds.midX
-            let y = imageView.bounds.midY
-            layer.position = CGPoint(x: x, y: y)
-        }
 
         // Update scaling when view size changes (e.g., window resize)
         // Note: When window size changes, we need to check if there's a stored zoom for the new size
@@ -3654,7 +3739,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     /// Calculates the image size after NSImageView fitting and before the zoom transform.
     private func getBaseDisplayedImageSize(for image: NSImage) -> NSSize? {
         let viewSize = view.bounds.size
-        let imageSize = image.size
+        let imageSize = logicalPixelSize(for: image)
         guard viewSize.width > 0,
               viewSize.height > 0,
               imageSize.width > 0,
@@ -3715,7 +3800,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         }
 
         if let hit = imageLinkHit(at: location) {
-            (imageView as? DraggableImageView)?.showLinkHoverBorder(
+            imageView?.showLinkHoverBorder(
                 in: hit.bounds,
                 displayScale: getCurrentZoomScale()
             )
@@ -3730,7 +3815,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             return
         }
 
-        (imageView as? DraggableImageView)?.hideLinkHoverBorder()
+        imageView?.hideLinkHoverBorder()
         clearLinkCursor()
 
         // If panning is available (zoomed), show open hand cursor
@@ -3758,7 +3843,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     }
 
     func handleCursorExit() {
-        (imageView as? DraggableImageView)?.hideLinkHoverBorder()
+        imageView?.hideLinkHoverBorder()
         clearLinkCursor()
         if openHandCursorPushed {
             NSCursor.pop()
@@ -3783,7 +3868,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         handleCursorUpdate(at: location)
     }
 
-    /// Converts the pointer through the image view's layer transform so link
+    /// Converts the pointer through the image's Metal geometry so link
     /// hit-testing stays aligned while the image is zoomed or panned.
     private struct ImageLinkHit {
         let link: DetectedImageLink
@@ -3800,12 +3885,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
             return nil
         }
 
-        let untransformedLocation: CGPoint
-        if let layer = imageView.layer, let superlayer = layer.superlayer {
-            untransformedLocation = layer.convert(location, from: superlayer)
-        } else {
-            untransformedLocation = location
-        }
+        let untransformedLocation = imageView.untransformedPoint(location)
 
         let imageRect = CGRect(
             x: imageView.bounds.midX - displayedSize.width / 2,
@@ -3835,7 +3915,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
     func handlePanStart(at location: NSPoint) {
         guard imageView.image != nil else { return }
 
-        (imageView as? DraggableImageView)?.hideLinkHoverBorder()
+        imageView?.hideLinkHoverBorder()
         clearLinkCursor()
 
         // Pop open hand cursor if it was shown
@@ -3873,6 +3953,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         // Store and apply the new offset
         storePanOffset(newOffset)
         applyZoomTransform(scale: getCurrentZoomScale())
+        recordDragAnchor(at: location)
     }
 
     /// Handles the end of a pan gesture
@@ -4111,6 +4192,7 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         newOffset = constrainPanOffset(newOffset, zoomScale: getCurrentZoomScale())
         storePanOffset(newOffset)
         applyZoomTransform(scale: getCurrentZoomScale())
+        recordDragAnchor(at: zoomPointerLocation())
     }
 
     private func navigateWithScroll(_ event: NSEvent, screenPoint: NSPoint) -> Bool {
@@ -4238,13 +4320,12 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         // Apply magnification: event.magnification is the delta (e.g., 0.1 for 10% increase)
         // newScale = currentScale * (1 + magnification)
         let newZoom = min(
-            max(currentZoom * (1 + magnification), minZoom),
+            max(currentZoom * (1 + magnification), min(currentZoom, minZoom)),
             maximumStandardZoomScale(for: image)
         )
 
         if newZoom != currentZoom {
-            storeZoomScale(newZoom)
-            updateImageScaling(for: image)
+            changeZoom(to: newZoom, at: zoomPointerLocation())
             // Update cursor when zoom changes
             refreshCursorForCurrentMouseLocation()
         }
@@ -4273,14 +4354,8 @@ class ViewController: NSViewController, NSDraggingDestination, DraggingDestinati
         let edgeBasedMaxOffsetX = max(0, (scaledWidth - viewSize.width) / 2)
         let edgeBasedMaxOffsetY = max(0, (scaledHeight - viewSize.height) / 2)
 
-        // Limit panning to half the view size in each direction
-        // This ensures the image center can't go beyond the view center
-        let halfViewWidth = viewSize.width / 2
-        let halfViewHeight = viewSize.height / 2
-
-        // Use the smaller of the two constraints
-        let maxOffsetX = min(edgeBasedMaxOffsetX, halfViewWidth)
-        let maxOffsetY = min(edgeBasedMaxOffsetY, halfViewHeight)
+        let maxOffsetX = edgeBasedMaxOffsetX
+        let maxOffsetY = edgeBasedMaxOffsetY
 
         // Constrain the offset
         let constrainedX = max(-maxOffsetX, min(maxOffsetX, offset.x))

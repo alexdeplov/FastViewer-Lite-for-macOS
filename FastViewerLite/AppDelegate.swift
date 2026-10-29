@@ -158,6 +158,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         // Store references
         window = newWindow
         viewController = newViewController
+        if !SettingsManager.shared.autoResizeToImageSize {
+            newViewController.restoreWindowSizePreset(animated: false)
+        }
         
         // Set initial appearance-based background
         updateWindowAppearance()
@@ -340,6 +343,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDele
         autoResizeMenuItem?.target = self
         autoResizeMenuItem?.isEnabled = true
         autoResizeMenuItem?.state = SettingsManager.shared.autoResizeToImageSize ? .on : .off
+        if SettingsManager.shared.autoResizeToImageSize {
+            updateWindowSizeMenuCheckmarks(selected: resizeToImageMenuItem)
+        } else {
+            switch SettingsManager.shared.windowSizePreset {
+            case .small: updateWindowSizeMenuCheckmarks(selected: resizeSmallMenuItem)
+            case .medium: updateWindowSizeMenuCheckmarks(selected: resizeMediumMenuItem)
+            case .large: updateWindowSizeMenuCheckmarks(selected: resizeLargeMenuItem)
+            }
+        }
         if let item = autoResizeMenuItem {
             viewMenu.addItem(item)
         }

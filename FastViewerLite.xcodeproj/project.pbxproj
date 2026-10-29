@@ -37,6 +37,8 @@
 		B10000000000000000000008 /* AboutViewControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000008 /* AboutViewControllerTests.swift */; };
 		B10000000000000000000009 /* FolderAccessManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000009 /* FolderAccessManagerTests.swift */; };
 		B1000000000000000000000A /* AppDelegateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000000000000000000000A /* AppDelegateTests.swift */; };
+		C10000000000000000000001 /* MetalImageRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000001; };
+		C10000000000000000000002 /* ImageShaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = C20000000000000000000002; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -85,6 +87,8 @@
 		B2000000000000000000000A /* AppDelegateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegateTests.swift; sourceTree = "<group>"; };
 		B2000000000000000000000B /* FastViewerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FastViewerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FA97D78E2EF4905700EE6799 /* FastViewer Lite.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "FastViewer Lite.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		C20000000000000000000001 /* MetalImageRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalImageRenderer.swift; sourceTree = "<group>"; };
+		C20000000000000000000002 /* ImageShaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = ImageShaders.metal; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -143,6 +147,8 @@
 			children = (
 				A20000000000000000000003 /* ViewController.swift */,
 				A20000000000000000000004 /* DraggableImageView.swift */,
+				C20000000000000000000001 /* MetalImageRenderer.swift */,
+				C20000000000000000000002 /* ImageShaders.metal */,
 				A20000000000000000000005 /* DraggableView.swift */,
 				A20000000000000000000006 /* NonInteractiveImageView.swift */,
 				A20000000000000000000017 /* ImageLinkDetector.swift */,
@@ -401,6 +407,8 @@
 				A10000000000000000000002 /* AppDelegate.swift in Sources */,
 				A10000000000000000000003 /* ViewController.swift in Sources */,
 				A10000000000000000000004 /* DraggableImageView.swift in Sources */,
+				C10000000000000000000001 /* MetalImageRenderer.swift in Sources */,
+				C10000000000000000000002 /* ImageShaders.metal in Sources */,
 				A10000000000000000000005 /* DraggableView.swift in Sources */,
 				A10000000000000000000006 /* NonInteractiveImageView.swift in Sources */,
 				A10000000000000000000007 /* SettingsViewController.swift in Sources */,

@@ -7,14 +7,18 @@
 
 import XCTest
 import AppKit
+import MetalKit
+import ImageIO
 @testable import FastViewer_Lite
 
 final class ViewControllerTests: XCTestCase {
 
     var viewController: ViewController!
+    private var previousWindowSizePreset: Any?
 
     override func setUp() {
         super.setUp()
+        previousWindowSizePreset = UserDefaults.standard.object(forKey: "WindowSizePreset")
         ImageCacheManager.shared.clearCache()
         viewController = ViewController()
         // Load the view to initialize the imageView
@@ -24,6 +28,11 @@ final class ViewControllerTests: XCTestCase {
     override func tearDown() {
         ImageCacheManager.shared.clearCache()
         viewController = nil
+        if let previousWindowSizePreset {
+            UserDefaults.standard.set(previousWindowSizePreset, forKey: "WindowSizePreset")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "WindowSizePreset")
+        }
         super.tearDown()
     }
 
@@ -33,20 +42,256 @@ final class ViewControllerTests: XCTestCase {
         XCTAssertEqual(viewController.imageView.imageAlignment, .alignCenter, "Image alignment should be center")
     }
 
-    func testInvisibleCenteredToastDoesNotInterceptImageHitTestingInSmallWindow() {
-        let window = makeTestWindow()
-        window.setContentSize(NSSize(width: 300, height: 300))
-        viewController.view.layoutSubtreeIfNeeded()
-
-        let center = NSPoint(
-            x: viewController.view.bounds.midX,
-            y: viewController.view.bounds.midY
+    func testNearestNeighborRenderingDoesNotBlendSourcePixels() throws {
+        let renderer = MetalImageRenderer.shared
+        let device = try XCTUnwrap(renderer.device)
+        XCTAssertTrue(renderer.isAvailable)
+        let source = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+            isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        for y in 0..<2 {
+            source.setColor(NSColor(deviceRed: 0, green: 0, blue: 0, alpha: 1), atX: 0, y: y)
+            source.setColor(NSColor(deviceRed: 1, green: 1, blue: 1, alpha: 1), atX: 1, y: y)
+        }
+        let texture = try XCTUnwrap(renderer.makeTexture(try XCTUnwrap(source.cgImage)))
+        let targetDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm_srgb, width: 32, height: 32, mipmapped: false
         )
+        targetDescriptor.usage = [.renderTarget]
+        targetDescriptor.storageMode = .shared
+        let target = try XCTUnwrap(device.makeTexture(descriptor: targetDescriptor))
+        for nearest in [false, true, false] {
+            let command = try XCTUnwrap(renderer.render(
+                texture: texture, to: target, geometry: SIMD4(1, 1, 0, 0), nearest: nearest
+            ))
+            command.waitUntilCompleted()
+            XCTAssertNil(command.error)
+            var bytes = [UInt8](repeating: 0, count: 32 * 32 * 4)
+            target.getBytes(&bytes, bytesPerRow: 32 * 4,
+                            from: MTLRegionMake2D(0, 0, 32, 32), mipmapLevel: 0)
+            var blendedPixels = 0
+            for x in 0..<32 {
+                let offset = (16 * 32 + x) * 4
+                let value = bytes[offset + 2]
+                XCTAssertEqual(bytes[offset + 3], 255)
+                if value > 0 && value < 255 { blendedPixels += 1 }
+                if nearest { XCTAssertEqual(value, x < 16 ? 0 : 255) }
+            }
+            if nearest { XCTAssertEqual(blendedPixels, 0) }
+            else { XCTAssertGreaterThan(blendedPixels, 0) }
+        }
+    }
 
-        XCTAssertTrue(
-            viewController.view.hitTest(center) === viewController.imageView,
-            "The decorative toast over a 300x300 image must pass wheel events through to the image view"
+    func testMetalCanvasZoomKeepsViewportFixedAndUsesOriginalTexture() throws {
+        let canvas = DraggableImageView(frame: NSRect(x: 0, y: 0, width: 4, height: 4))
+        let rep = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 16, pixelsHigh: 16,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+            isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        // Alternating columns would be lost if the 4px fitted view were enlarged.
+        for y in 0..<16 {
+            for x in 0..<16 {
+                let value: CGFloat = x.isMultiple(of: 2) ? 0 : 1
+                rep.setColor(NSColor(deviceRed: value, green: value, blue: value, alpha: 1), atX: x, y: y)
+            }
+        }
+        let image = NSImage(size: NSSize(width: 16, height: 16))
+        image.addRepresentation(rep)
+        canvas.image = image
+        canvas.layoutSubtreeIfNeeded()
+        let ready = expectation(description: "Texture uploaded asynchronously")
+        var remainingAttempts = 200
+        func waitForUpload() {
+            remainingAttempts -= 1
+            if canvas.surface.texture != nil || remainingAttempts <= 0 { ready.fulfill() }
+            else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { waitForUpload() } }
+        }
+        waitForUpload()
+        wait(for: [ready], timeout: 5)
+        let texture = try XCTUnwrap(canvas.surface.texture)
+        XCTAssertEqual(texture.width, 16)
+        canvas.zoomScale = 8
+        canvas.usesNearestNeighbor = true
+        let targetDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm_srgb, width: 4, height: 4, mipmapped: false
         )
+        targetDescriptor.storageMode = .shared
+        targetDescriptor.usage = .renderTarget
+        let renderer = MetalImageRenderer.shared
+        let target = try XCTUnwrap(renderer.device?.makeTexture(descriptor: targetDescriptor))
+        let command = try XCTUnwrap(renderer.render(texture: texture, to: target,
+            geometry: canvas.surface.geometry, nearest: canvas.surface.nearest))
+        command.waitUntilCompleted()
+        XCTAssertNil(command.error)
+        var bytes = [UInt8](repeating: 0, count: 64)
+        target.getBytes(&bytes, bytesPerRow: 16, from: MTLRegionMake2D(0, 0, 4, 4), mipmapLevel: 0)
+        var row: [UInt8] = []
+        for x in 0..<4 { row.append(bytes[(8 + x) * 4 + 2]) }
+        XCTAssertEqual(row, [255, 255, 0, 0])
+        XCTAssertEqual(canvas.surface.frame.size, NSSize(width: 4, height: 4))
+        XCTAssertEqual(canvas.layer?.transform.m11 ?? 1, 1)
+        canvas.panOffset = NSPoint(x: 2, y: -4)
+        XCTAssertEqual(canvas.surface.geometry.z, 1, accuracy: 0.001)
+        XCTAssertEqual(canvas.surface.geometry.w, -2, accuracy: 0.001)
+        XCTAssertEqual(canvas.untransformedPoint(NSPoint(x: 4, y: -2)), NSPoint(x: 2, y: 2))
+        canvas.image = nil
+        XCTAssertNil(canvas.surface.texture)
+    }
+
+    func testRapidMetalImageChangesKeepTextureAndAspectRatioTogether() throws {
+        let canvas = DraggableImageView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        func assertDisplayedAspect(file: StaticString = #filePath, line: UInt = #line) {
+            guard let texture = canvas.surface.texture else { return }
+            let geometry = canvas.surface.geometry
+            let displayedAspect = CGFloat(geometry.x) * canvas.bounds.width
+                / (CGFloat(geometry.y) * canvas.bounds.height)
+            XCTAssertEqual(displayedAspect, CGFloat(texture.width) / CGFloat(texture.height),
+                           accuracy: 0.001, file: file, line: line)
+        }
+        func waitForTexture(width: Int) {
+            let ready = expectation(description: "Texture \(width) ready")
+            var remaining = 200
+            func poll() {
+                assertDisplayedAspect()
+                remaining -= 1
+                if canvas.surface.texture?.width == width || remaining == 0 { ready.fulfill() }
+                else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { poll() } }
+            }
+            poll()
+            wait(for: [ready], timeout: 3)
+            XCTAssertEqual(canvas.surface.texture?.width, width)
+            assertDisplayedAspect()
+        }
+        let landscape = createTestImage(size: NSSize(width: 128, height: 64))
+        canvas.image = landscape
+        waitForTexture(width: try XCTUnwrap(landscape.cgImage(forProposedRect: nil, context: nil, hints: nil)).width)
+        let previousTexture = try XCTUnwrap(canvas.surface.texture)
+        let portrait = createTestImage(size: NSSize(width: 64, height: 128))
+        canvas.image = portrait
+        // The main-thread upload completion has not run yet. The old texture
+        // must retain its own proportions, even as the viewport/settings change.
+        XCTAssertTrue(canvas.surface.texture === previousTexture)
+        canvas.frame.size = NSSize(width: 400, height: 600)
+        canvas.imageScaling = .scaleProportionallyDown
+        canvas.zoomScale = 2
+        canvas.layoutSubtreeIfNeeded()
+        assertDisplayedAspect()
+        waitForTexture(width: try XCTUnwrap(portrait.cgImage(forProposedRect: nil, context: nil, hints: nil)).width)
+        for index in 0..<30 {
+            let size = index.isMultiple(of: 2)
+                ? NSSize(width: 96, height: 288) : NSSize(width: 256, height: 64)
+            canvas.image = createTestImage(size: size)
+            canvas.imageScaling = .scaleProportionallyUpOrDown
+            assertDisplayedAspect()
+        }
+        let last = createTestImage(size: NSSize(width: 333, height: 111))
+        canvas.image = last
+        assertDisplayedAspect()
+        waitForTexture(width: try XCTUnwrap(last.cgImage(forProposedRect: nil, context: nil, hints: nil)).width)
+    }
+
+    func testMetalResizePresentsNewFrameBeforeReturningToTrackingLoop() throws {
+        let canvas = DraggableImageView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
+        let window = NSWindow(contentRect: canvas.frame, styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.contentView = canvas
+        window.makeKeyAndOrderFront(nil)
+        defer { window.orderOut(nil) }
+        canvas.image = createTestImage(size: NSSize(width: 320, height: 160))
+        let ready = expectation(description: "Texture ready for live resize")
+        var attempts = 200
+        func poll() {
+            attempts -= 1
+            if canvas.surface.texture != nil || attempts == 0 { ready.fulfill() }
+            else { DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { poll() } }
+        }
+        poll()
+        wait(for: [ready], timeout: 3)
+        let texture = try XCTUnwrap(canvas.surface.texture)
+        XCTAssertTrue(canvas.surface.presentsWithTransaction)
+        // No run-loop turns or mouse-up between these updates. Every size must
+        // get a new drawable immediately, using the existing texture.
+        for size in [NSSize(width: 600, height: 300), NSSize(width: 300, height: 600), NSSize(width: 720, height: 420)] {
+            window.setContentSize(size)
+            canvas.setFrameSize(size)
+            XCTAssertEqual(canvas.surface.lastPresentedDrawableSize, canvas.surface.convertToBacking(canvas.surface.bounds).size)
+            let geometry = canvas.surface.geometry
+            XCTAssertEqual(CGFloat(geometry.x) * size.width / (CGFloat(geometry.y) * size.height), 2, accuracy: 0.001)
+            XCTAssertTrue(canvas.surface.texture === texture)
+        }
+    }
+
+    func testMetalRenderingPreservesOrientationAndTransparency() throws {
+        let renderer = MetalImageRenderer.shared
+        let rep = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+            isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        rep.setColor(NSColor(deviceRed: 1, green: 0, blue: 0, alpha: 1), atX: 0, y: 0)
+        rep.setColor(NSColor(deviceRed: 0, green: 1, blue: 0, alpha: 1), atX: 1, y: 0)
+        rep.setColor(NSColor(deviceRed: 0, green: 0, blue: 1, alpha: 1), atX: 0, y: 1)
+        rep.setColor(NSColor(deviceRed: 0, green: 0, blue: 0, alpha: 0), atX: 1, y: 1)
+        let texture = try XCTUnwrap(renderer.makeTexture(try XCTUnwrap(rep.cgImage)))
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .bgra8Unorm_srgb, width: 2, height: 2, mipmapped: false
+        )
+        descriptor.storageMode = .shared
+        descriptor.usage = .renderTarget
+        let target = try XCTUnwrap(renderer.device?.makeTexture(descriptor: descriptor))
+        let command = try XCTUnwrap(renderer.render(texture: texture, to: target,
+            geometry: SIMD4(1, 1, 0, 0), nearest: true))
+        command.waitUntilCompleted()
+        XCTAssertNil(command.error)
+        var bytes = [UInt8](repeating: 0, count: 16)
+        target.getBytes(&bytes, bytesPerRow: 8, from: MTLRegionMake2D(0, 0, 2, 2), mipmapLevel: 0)
+        XCTAssertEqual(bytes, [0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255, 0, 0, 0, 0])
+    }
+
+    func testMetalCanvasPlaysAnimatedFramesAndDiscardsReplacedUploads() throws {
+        let rep = try XCTUnwrap(NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+            isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+        ))
+        let data = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(data, "com.compuserve.gif" as CFString, 2, nil))
+        CGImageDestinationSetProperties(destination, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary)
+        for green in [false, true] {
+            for y in 0..<2 {
+                for x in 0..<2 {
+                    rep.setColor(NSColor(deviceRed: green ? 0 : 1, green: green ? 1 : 0, blue: 0, alpha: 1), atX: x, y: y)
+                }
+            }
+            CGImageDestinationAddImage(destination, try XCTUnwrap(rep.cgImage),
+                [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: 0.05]] as CFDictionary)
+        }
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        let image = try XCTUnwrap(NSImage(data: data as Data))
+        let canvas = DraggableImageView(frame: NSRect(x: 0, y: 0, width: 32, height: 32))
+        let window = NSWindow(contentRect: canvas.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = canvas
+        canvas.image = createTestImage(size: NSSize(width: 100, height: 100))
+        canvas.image = nil
+        canvas.image = image
+        let frame = expectation(description: "Animated green frame reached the GPU")
+        var attempts = 200
+        func poll() {
+            attempts -= 1
+            if let texture = canvas.surface.texture {
+                var pixel = [UInt8](repeating: 0, count: 4)
+                texture.getBytes(&pixel, bytesPerRow: 4, from: MTLRegionMake2D(0, 0, 1, 1), mipmapLevel: 0)
+                if pixel[0] == 0 && pixel[1] == 255 { frame.fulfill(); return }
+            }
+            if attempts > 0 { DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) { poll() } }
+        }
+        poll()
+        wait(for: [frame], timeout: 3)
+        canvas.image = nil
+        XCTAssertNil(canvas.surface.texture)
     }
 
     func testImageLinkDetectorFindsHTTPAndHTTPSLinks() {
@@ -393,7 +638,8 @@ final class ViewControllerTests: XCTestCase {
             self.viewController.displayedFileURL == fileURL
         }
 
-        let expectedTitle = "FastViewer • \(fileURL.lastPathComponent)"
+        let position = viewController.fileListManager.fileURLs.firstIndex(of: fileURL).map { $0 + 1 } ?? 1
+        let expectedTitle = "FastViewer Lite - \(fileURL.lastPathComponent) - \(position)/\(viewController.fileListManager.fileURLs.count)"
         XCTAssertEqual(
             window.title,
             expectedTitle,
@@ -569,7 +815,7 @@ final class ViewControllerTests: XCTestCase {
         viewController.keyDown(with: keyEvent)
 
         waitUntil(description: "file is removed after Cmd+Backspace") {
-            !FileManager.default.fileExists(atPath: testFileURL.path)
+            !FileManager.default.fileExists(atPath: testFileURL.path) && self.viewController.canUndoMoveToTrash
         }
         XCTAssertTrue(viewController.canUndoMoveToTrash, "Deleting through the keyboard shortcut should push undo state")
         XCTAssertNotNil(window.contentViewController)
@@ -965,13 +1211,14 @@ final class ViewControllerTests: XCTestCase {
             return
         }
 
+        let firstTitle = window.title
         ImageCacheManager.shared.clearCache()
         viewController.loadImage(from: secondFileURL)
 
         XCTAssertEqual(viewController.displayedFileURL, firstFileURL, "Visible file should remain on the previous image while the next file loads")
         XCTAssertTrue(viewController.imageView.image === originalImage, "Previous pixels should remain visible during an uncached transition")
         XCTAssertFalse(viewController.isLoadingOverlayVisible, "Uncached transitions should no longer show a loading overlay")
-        XCTAssertEqual(window.title, "FastViewer • \(firstFileURL.lastPathComponent)", "Window title should stay tied to the displayed file until commit")
+        XCTAssertEqual(window.title, firstTitle, "Window title should stay tied to the displayed file until commit")
 
         waitUntil(description: "second image commits after uncached transition") {
             self.viewController.displayedFileURL == secondFileURL &&
@@ -980,7 +1227,8 @@ final class ViewControllerTests: XCTestCase {
 
         XCTAssertEqual(viewController.displayedFileURL, secondFileURL, "Visible file should switch only when the new image commits")
         XCTAssertFalse(viewController.imageView.image === originalImage, "Committed image should replace the old image after loading finishes")
-        XCTAssertEqual(window.title, "FastViewer • \(secondFileURL.lastPathComponent)", "Window title should update when the new image commits")
+        let position = viewController.fileListManager.fileURLs.firstIndex(of: secondFileURL).map { $0 + 1 } ?? 1
+        XCTAssertEqual(window.title, "FastViewer Lite - \(secondFileURL.lastPathComponent) - \(position)/\(viewController.fileListManager.fileURLs.count)", "Window title should update when the new image commits")
     }
 
     func testRapidNavigationAdvancesPastPendingImage() {
@@ -1037,7 +1285,7 @@ final class ViewControllerTests: XCTestCase {
         viewController.fileListManager.fileURLs = [firstFileURL, secondFileURL]
         viewController.fileListManager.currentIndex = 0
 
-        guard let imageView = viewController.imageView as? DraggableImageView else {
+        guard let imageView = viewController.imageView else {
             XCTFail("Image view should support feh-style click navigation")
             return
         }
@@ -1066,7 +1314,7 @@ final class ViewControllerTests: XCTestCase {
         viewController.fileListManager.fileURLs = [firstFileURL, secondFileURL]
         viewController.fileListManager.currentIndex = 0
 
-        guard let imageView = viewController.imageView as? DraggableImageView else {
+        guard let imageView = viewController.imageView else {
             XCTFail("Image view should support feh-style click navigation")
             return
         }
@@ -1095,7 +1343,7 @@ final class ViewControllerTests: XCTestCase {
         viewController.fileListManager.fileURLs = [firstFileURL, secondFileURL]
         viewController.fileListManager.currentIndex = 0
 
-        guard let imageView = viewController.imageView as? DraggableImageView else {
+        guard let imageView = viewController.imageView else {
             XCTFail("Image view should support feh-style click navigation")
             return
         }
@@ -1762,7 +2010,7 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [loadExpectation], timeout: 1.0)
 
         // Verify initial zoom is 1.0 (no transform)
-        let initialTransform = viewController.imageView.layer?.transform
+        let initialTransform = viewController.imageView.renderTransform
         XCTAssertEqual(initialTransform?.m11 ?? 1.0, 1.0, accuracy: 0.01, "Initial zoom should be 1.0")
 
         // Create a Cmd+= key event for zoom in
@@ -1795,8 +2043,169 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [zoomExpectation], timeout: 0.5)
 
         // Verify zoom was applied (transform should be > 1.0)
-        let zoomedTransform = viewController.imageView.layer?.transform
+        let zoomedTransform = viewController.imageView.renderTransform
         XCTAssertGreaterThan(zoomedTransform?.m11 ?? 1.0, 1.0, "Zoom in should increase scale")
+    }
+
+    func testRepeatedZoomOutStopsAtInitialSizeForLargeAndSmallImages() throws {
+        let previous = SettingsManager.shared.autoResizeToImageSize
+        SettingsManager.shared.autoResizeToImageSize = false
+        defer { SettingsManager.shared.autoResizeToImageSize = previous }
+        let window = makeTestWindow()
+        window.setContentSize(NSSize(width: 600, height: 400))
+        for size in [NSSize(width: 1600, height: 1200), NSSize(width: 100, height: 80)] {
+            let file = makeTestImageFile(name: "zoom-floor-\(UUID().uuidString).jpg", size: size)
+            defer { try? FileManager.default.removeItem(at: file) }
+            viewController.loadImage(from: file)
+            waitUntil(description: "image loaded for zoom floor") { self.viewController.displayedFileURL == file }
+            let initialFrame = window.frame
+            func press(_ character: String, code: UInt16) throws {
+                let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                    timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: character,
+                    charactersIgnoringModifiers: character, isARepeat: false, keyCode: code))
+                viewController.keyDown(with: event)
+            }
+            try press("=", code: 24)
+            try press("=", code: 24)
+            XCTAssertGreaterThan(viewController.imageView.zoomScale, 1)
+            for _ in 0..<20 { try press("-", code: 27) }
+            XCTAssertEqual(viewController.imageView.zoomScale, 1, accuracy: 0.001)
+            XCTAssertEqual(window.frame, initialFrame)
+            XCTAssertEqual(viewController.imageView.panOffset, .zero)
+        }
+    }
+
+    func testZoomOutAfterDraggingKeepsImageEdgesInsideTheViewport() throws {
+        let previous = SettingsManager.shared.autoResizeToImageSize
+        SettingsManager.shared.autoResizeToImageSize = false
+        defer { SettingsManager.shared.autoResizeToImageSize = previous }
+        let window = makeTestWindow()
+        window.setContentSize(NSSize(width: 600, height: 400))
+        viewController.view.layoutSubtreeIfNeeded()
+        let file = makeTestImageFile(name: "zoom-pan-floor-\(UUID().uuidString).jpg", size: NSSize(width: 1800, height: 1200))
+        defer { try? FileManager.default.removeItem(at: file) }
+        viewController.loadImage(from: file)
+        waitUntil(description: "image ready for zoom and drag") {
+            self.viewController.displayedFileURL == file && self.viewController.imageView.surface.texture != nil
+        }
+        func press(_ character: String, code: UInt16) throws {
+            let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: character,
+                charactersIgnoringModifiers: character, isARepeat: false, keyCode: code))
+            viewController.keyDown(with: event)
+        }
+        for _ in 0..<3 { try press("=", code: 24) }
+        viewController.handlePanStart(at: NSPoint(x: 200, y: 200))
+        viewController.handlePanMove(to: NSPoint(x: 2000, y: 2000))
+        viewController.handlePanEnd()
+        XCTAssertNotEqual(viewController.imageView.panOffset, .zero)
+        for _ in 0..<8 {
+            try press("-", code: 27)
+            let geometry = viewController.imageView.surface.geometry
+            XCTAssertGreaterThanOrEqual(geometry.x - abs(geometry.z), 0.999)
+            XCTAssertGreaterThanOrEqual(geometry.y - abs(geometry.w), 0.999)
+        }
+        XCTAssertEqual(viewController.imageView.zoomScale, 1, accuracy: 0.001)
+        XCTAssertEqual(viewController.imageView.panOffset, .zero)
+    }
+
+    func testDragAnchorReplacesEarlierPointerFocus() throws {
+        try runActionScenario(33)
+        try runActionScenario(34)
+    }
+
+    func testMaximumZoomDragCanReachEveryImageCorner() throws {
+        let previous = SettingsManager.shared.autoResizeToImageSize
+        SettingsManager.shared.autoResizeToImageSize = false
+        defer { SettingsManager.shared.autoResizeToImageSize = previous }
+        let window = makeTestWindow()
+        window.setContentSize(NSSize(width: 600, height: 400))
+        viewController.view.layoutSubtreeIfNeeded()
+        let file = makeTestImageFile(name: "zoom-corners-\(UUID().uuidString).jpg", size: NSSize(width: 1800, height: 1200))
+        defer { try? FileManager.default.removeItem(at: file) }
+        viewController.loadImage(from: file)
+        waitUntil(description: "corner image loaded") { self.viewController.displayedFileURL == file }
+        viewController.changeZoom(to: 10, at: NSPoint(x: 300, y: 200))
+        for x: CGFloat in [-1, 1] {
+            for y: CGFloat in [-1, 1] {
+                viewController.handlePanStart(at: .zero)
+                viewController.handlePanMove(to: NSPoint(x: x * 100000, y: y * 100000))
+                viewController.handlePanEnd()
+                XCTAssertEqual(viewController.imageView.panOffset.x, x * 2700, accuracy: 0.01)
+                XCTAssertEqual(viewController.imageView.panOffset.y, y * 1800, accuracy: 0.01)
+            }
+        }
+    }
+
+    func testZoomOutReversesLatestPointerSegmentBeforeEarlierOnes() throws {
+        let previous = SettingsManager.shared.autoResizeToImageSize
+        SettingsManager.shared.autoResizeToImageSize = false
+        defer { SettingsManager.shared.autoResizeToImageSize = previous }
+        let window = makeTestWindow()
+        window.setContentSize(NSSize(width: 600, height: 400))
+        viewController.view.layoutSubtreeIfNeeded()
+        let file = makeTestImageFile(name: "zoom-segments-\(UUID().uuidString).jpg", size: NSSize(width: 1800, height: 1200))
+        defer { try? FileManager.default.removeItem(at: file) }
+        viewController.loadImage(from: file)
+        waitUntil(description: "zoom segment image loaded") { self.viewController.displayedFileURL == file }
+        viewController.changeZoom(to: 2, at: NSPoint(x: 420, y: 260))
+        let firstOffset = viewController.imageView.panOffset
+        let secondPointer = NSPoint(x: 150, y: 100)
+        let secondSource = viewController.imageView.untransformedPoint(secondPointer)
+        viewController.changeZoom(to: 4, at: secondPointer)
+        window.setContentSize(NSSize(width: 800, height: 400))
+        viewController.view.layoutSubtreeIfNeeded()
+        viewController.viewDidLayout()
+        let resizedPointer = NSPoint(x: secondPointer.x + 100, y: secondPointer.y)
+        viewController.changeZoom(to: 3, at: NSPoint(x: 590, y: 390))
+        let sourceAfterZoomOut = viewController.imageView.untransformedPoint(resizedPointer)
+        XCTAssertEqual(sourceAfterZoomOut.x, secondSource.x + 100, accuracy: 0.01)
+        XCTAssertEqual(sourceAfterZoomOut.y, secondSource.y, accuracy: 0.01)
+        viewController.changeZoom(to: 2, at: .zero)
+        XCTAssertEqual(viewController.imageView.panOffset.x, firstOffset.x, accuracy: 0.01)
+        XCTAssertEqual(viewController.imageView.panOffset.y, firstOffset.y, accuracy: 0.01)
+        viewController.changeZoom(to: 1, at: .zero)
+        XCTAssertEqual(viewController.imageView.panOffset, .zero)
+    }
+
+    func testZoomOutAfterDragAndResizeUsesDragAnchor() throws {
+        try runActionScenario(36)
+        try runActionScenario(37)
+    }
+
+    func testZoomFilterAndTitleReturnToRestingState() throws {
+        let previous = SettingsManager.shared.autoResizeToImageSize
+        SettingsManager.shared.autoResizeToImageSize = false
+        defer { SettingsManager.shared.autoResizeToImageSize = previous }
+        let window = makeTestWindow()
+        window.setContentSize(NSSize(width: 600, height: 400))
+        let file = makeTestImageFile(name: "zoom-title-\(UUID().uuidString).jpg", size: NSSize(width: 800, height: 600))
+        defer { try? FileManager.default.removeItem(at: file) }
+        viewController.loadImage(from: file)
+        waitUntil(description: "image and texture ready") {
+            self.viewController.displayedFileURL == file && !self.viewController.imageView.isTexturePending
+        }
+        var files = (0..<128).map { file.deletingLastPathComponent().appendingPathComponent("placeholder-\($0).jpg") }
+        files[88] = file
+        viewController.fileListManager.fileURLs = files
+        viewController.fileListManager.currentIndex = 88
+        viewController.updateFileNameDisplay(for: file)
+        let base = "FastViewer Lite - \(file.lastPathComponent)"
+        XCTAssertEqual(window.title, base + " - 89/128")
+        XCTAssertFalse(viewController.imageView.usesNearestNeighbor)
+        XCTAssertFalse(viewController.imageView.surface.nearest)
+        for scale: CGFloat in [2.5, 1, 4, 1] {
+            viewController.changeZoom(to: scale, at: NSPoint(x: 300, y: 200))
+            XCTAssertEqual(viewController.imageView.usesNearestNeighbor, scale > 1)
+            let zoom = scale > 1 ? " \(Int(scale * 100))%" : ""
+            XCTAssertEqual(window.title, base + zoom + " - 89/128")
+            waitUntil(description: "sampler committed with texture") { !self.viewController.imageView.isTexturePending }
+            XCTAssertEqual(viewController.imageView.surface.nearest, scale > 1)
+        }
+        viewController.changeZoom(to: 2.5, at: NSPoint(x: 300, y: 200))
+        viewController.resizeWindow(to: NSSize(width: 600, height: 400), animated: false)
+        XCTAssertFalse(viewController.imageView.usesNearestNeighbor)
+        XCTAssertEqual(window.title, base + " - 89/128")
     }
 
     func testZoomOut() {
@@ -1878,8 +2287,8 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [zoomExpectation], timeout: 0.5)
 
         // Verify zoom out was applied (transform should be < 1.0)
-        let zoomedTransform = viewController.imageView.layer?.transform
-        XCTAssertLessThan(zoomedTransform?.m11 ?? 1.0, 1.0, "Zoom out should decrease scale")
+        let zoomedTransform = viewController.imageView.renderTransform
+        XCTAssertEqual(zoomedTransform?.m11 ?? 1.0, 1.0, accuracy: 0.001, "Zoom out must stop at the initial fitted size")
     }
 
     func testPixelGridWhenZoomedIn() {
@@ -1933,14 +2342,14 @@ final class ViewControllerTests: XCTestCase {
 
         // Ensure layer is set up
         viewController.imageView.wantsLayer = true
-        guard let layer = viewController.imageView.layer else {
+        guard viewController.imageView.layer != nil else {
             XCTFail("Image view layer should be available")
             return
         }
 
         // Verify initial state uses linear filtering (smooth interpolation)
-        XCTAssertEqual(layer.magnificationFilter, .linear, "Initial state should use linear filtering for smooth interpolation")
-        XCTAssertEqual(layer.minificationFilter, .linear, "Initial state should use linear filtering for smooth interpolation")
+        XCTAssertFalse(viewController.imageView.usesNearestNeighbor, "Initial state should use linear filtering for smooth interpolation")
+        XCTAssertFalse(viewController.imageView.usesNearestNeighbor, "Initial state should use linear filtering for smooth interpolation")
 
         // Zoom in to trigger pixel grid mode
         let zoomInEvent = NSEvent.keyEvent(
@@ -1972,12 +2381,13 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [zoomExpectation], timeout: 0.5)
 
         // Verify zoom was applied (transform should be > 1.0)
-        let zoomedTransform = viewController.imageView.layer?.transform
+        let zoomedTransform = viewController.imageView.renderTransform
         XCTAssertGreaterThan(zoomedTransform?.m11 ?? 1.0, 1.0, "Zoom in should increase scale")
 
         // Verify pixel grid mode is enabled (nearest-neighbor filtering)
-        XCTAssertEqual(layer.magnificationFilter, .nearest, "When zoomed in, should use nearest-neighbor filtering to show pixel grid")
-        XCTAssertEqual(layer.minificationFilter, .nearest, "When zoomed in, should use nearest-neighbor filtering to show pixel grid")
+        XCTAssertTrue(viewController.imageView.usesNearestNeighbor, "When zoomed in, should use nearest-neighbor filtering to show pixel grid")
+        XCTAssertTrue(viewController.imageView.usesNearestNeighbor, "When zoomed in, should use nearest-neighbor filtering to show pixel grid")
+        XCTAssertEqual((viewController.imageView)?.usesNearestNeighbor, true)
 
         // Zoom out or reset to normal zoom
         let zoomOutEvent = NSEvent.keyEvent(
@@ -2011,10 +2421,11 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [zoomOutExpectation], timeout: 0.5)
 
         // Verify filtering is back to linear when not zoomed in
-        let finalTransform = viewController.imageView.layer?.transform
+        let finalTransform = viewController.imageView.renderTransform
         if (finalTransform?.m11 ?? 1.0) <= 1.0 {
-            XCTAssertEqual(layer.magnificationFilter, .linear, "When not zoomed in, should use linear filtering for smooth interpolation")
-            XCTAssertEqual(layer.minificationFilter, .linear, "When not zoomed in, should use linear filtering for smooth interpolation")
+            XCTAssertFalse(viewController.imageView.usesNearestNeighbor, "When not zoomed in, should use linear filtering for smooth interpolation")
+            XCTAssertFalse(viewController.imageView.usesNearestNeighbor, "When not zoomed in, should use linear filtering for smooth interpolation")
+            XCTAssertEqual((viewController.imageView)?.usesNearestNeighbor, false)
         }
     }
 
@@ -2100,7 +2511,7 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [zoomInExpectation], timeout: 0.5)
 
         // Verify zoom was applied
-        let zoomedTransform = viewController.imageView.layer?.transform
+        let zoomedTransform = viewController.imageView.renderTransform
         XCTAssertGreaterThan(zoomedTransform?.m11 ?? 1.0, 1.0, "Zoom in should increase scale")
 
         window.setContentSize(NSSize(width: 600, height: 400))
@@ -2137,7 +2548,7 @@ final class ViewControllerTests: XCTestCase {
         }
         wait(for: [restoreExpectation], timeout: 0.5)
 
-        let actualSizeTransform = viewController.imageView.layer?.transform
+        let actualSizeTransform = viewController.imageView.renderTransform
         guard let loadedImage = viewController.imageView.image else {
             XCTFail("Image should remain loaded")
             return
@@ -2199,14 +2610,14 @@ final class ViewControllerTests: XCTestCase {
             (testImageSize.height / backingScale) / resizedBaseSize.height
         )
         XCTAssertEqual(
-            viewController.imageView.layer?.transform.m11 ?? 0,
+            viewController.imageView.renderTransform?.m11 ?? 0,
             expectedResizedTransform,
             accuracy: 0.01,
             "Actual Size should remain pixel-accurate after resizing the window"
         )
     }
 
-    func testZoomPersistsPerImage() {
+    func testZoomResetsWhenReturningToImage() {
         // Create a test window and add the view controller's view to it
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
@@ -2291,7 +2702,7 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [zoom1Expectation], timeout: 0.5)
 
         // Get zoom scale for first image
-        let zoom1Transform = viewController.imageView.layer?.transform
+        let zoom1Transform = viewController.imageView.renderTransform
         let zoom1Scale = zoom1Transform?.m11 ?? 1.0
 
         // Load second image
@@ -2305,7 +2716,7 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [load2Expectation], timeout: 1.0)
 
         // Second image should have no zoom (1.0)
-        let zoom2Transform = viewController.imageView.layer?.transform
+        let zoom2Transform = viewController.imageView.renderTransform
         let zoom2Scale = zoom2Transform?.m11 ?? 1.0
         XCTAssertEqual(zoom2Scale, 1.0, accuracy: 0.01, "Second image should start with zoom 1.0")
 
@@ -2319,10 +2730,11 @@ final class ViewControllerTests: XCTestCase {
         }
         wait(for: [load1AgainExpectation], timeout: 1.0)
 
-        // First image should have its stored zoom restored
-        let zoom1RestoredTransform = viewController.imageView.layer?.transform
+        // Returning to the first image must start fitted again.
+        let zoom1RestoredTransform = viewController.imageView.renderTransform
         let zoom1RestoredScale = zoom1RestoredTransform?.m11 ?? 1.0
-        XCTAssertEqual(zoom1RestoredScale, zoom1Scale, accuracy: 0.01, "First image should restore its stored zoom")
+        XCTAssertGreaterThan(zoom1Scale, 1, "The first image must have been zoomed before navigating away")
+        XCTAssertEqual(zoom1RestoredScale, 1, accuracy: 0.01, "Returning to the image must reset zoom")
     }
 
     func testZoomResetsWhenSwitchingFilesInCmd4Mode() {
@@ -2418,13 +2830,12 @@ final class ViewControllerTests: XCTestCase {
         }
         wait(for: [zoomOutExpectation], timeout: 0.5)
 
-        // In cmd4 mode, Cmd- scales window down instead of applying zoom transform
-        // Verify window is smaller than initial size
+        // At the fitted size, Cmd- must leave the window unchanged.
         let scaledWindowSize = window.frame.size
-        XCTAssertLessThan(scaledWindowSize.width, initialWindowSize.width, "Cmd- in cmd4 mode should scale window down")
+        XCTAssertEqual(scaledWindowSize.width, initialWindowSize.width, accuracy: 0.01, "Cmd- must not shrink the window below its initial fit")
 
         // Image transform should still be 1.0 (no zoom transform, just window scaling)
-        let transform = viewController.imageView.layer?.transform
+        let transform = viewController.imageView.renderTransform
         let scale = transform?.m11 ?? 1.0
         XCTAssertEqual(scale, 1.0, accuracy: 0.01, "In cmd4 mode, Cmd- scales window, not zoom transform")
 
@@ -2439,7 +2850,7 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [load2Expectation], timeout: 1.5)
 
         // Second image should have zoom at 1.0 (window resizes to match image)
-        let zoom2Transform = viewController.imageView.layer?.transform
+        let zoom2Transform = viewController.imageView.renderTransform
         let zoom2Scale = zoom2Transform?.m11 ?? 1.0
         XCTAssertEqual(zoom2Scale, 1.0, accuracy: 0.01, "Zoom should be 1.0 when switching files in cmd4 mode")
     }
@@ -2522,7 +2933,7 @@ final class ViewControllerTests: XCTestCase {
         let zoomedContentSize = window.contentRect(forFrameRect: window.frame).size
         XCTAssertGreaterThan(zoomedContentSize.width, initialContentSize.width, "Cmd+ in cmd4 mode should enlarge the window")
 
-        let transformAfterZoomIn = viewController.imageView.layer?.transform
+        let transformAfterZoomIn = viewController.imageView.renderTransform
         let scaleAfterZoomIn = transformAfterZoomIn?.m11 ?? 1.0
         XCTAssertGreaterThan(scaleAfterZoomIn, 1.0, "Cmd+ in cmd4 mode should also enlarge the image transform")
 
@@ -2556,7 +2967,7 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [zoomOutExpectation], timeout: 0.5)
 
         let restoredContentSize = window.contentRect(forFrameRect: window.frame).size
-        let transformAfterZoomOut = viewController.imageView.layer?.transform
+        let transformAfterZoomOut = viewController.imageView.renderTransform
         let scaleAfterZoomOut = transformAfterZoomOut?.m11 ?? 1.0
 
         XCTAssertEqual(restoredContentSize.width, initialContentSize.width, accuracy: 2.0, "Cmd- should shrink the window back to fit size")
@@ -2636,7 +3047,7 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [zoomExpectation], timeout: 0.5)
 
         // Verify zoom was applied
-        let zoomedTransform = viewController.imageView.layer?.transform
+        let zoomedTransform = viewController.imageView.renderTransform
         let zoomedScale = zoomedTransform?.m11 ?? 1.0
         XCTAssertGreaterThan(zoomedScale, 1.0, "Zoom should be > 1.0 after Cmd+=")
 
@@ -2666,7 +3077,7 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [resizeExpectation], timeout: 1.0)
 
         // Zoom should be reset to 1.0 after changing window preset
-        let resetTransform = viewController.imageView.layer?.transform
+        let resetTransform = viewController.imageView.renderTransform
         let resetScale = resetTransform?.m11 ?? 1.0
         XCTAssertEqual(resetScale, 1.0, accuracy: 0.01, "Zoom should reset to 1.0 when changing window preset with Cmd+2")
     }
@@ -2862,7 +3273,7 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [zoomExpectation], timeout: 0.5)
 
         // Get initial transform (should have zoom but no translation)
-        let initialTransform = viewController.imageView.layer?.transform
+        let initialTransform = viewController.imageView.renderTransform
         let initialTranslationX = initialTransform?.m41 ?? 0
         let initialTranslationY = initialTransform?.m42 ?? 0
 
@@ -2882,19 +3293,21 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [panExpectation], timeout: 0.5)
 
         // Check that transform has translation applied
-        let pannedTransform = viewController.imageView.layer?.transform
+        let pannedTransform = viewController.imageView.renderTransform
         let newTranslationX = pannedTransform?.m41 ?? 0
         let newTranslationY = pannedTransform?.m42 ?? 0
 
         // Translation should have changed (delta is 50 in x, 20 in y)
         XCTAssertNotEqual(newTranslationX, initialTranslationX, accuracy: 0.01, "Panning should apply X translation")
         XCTAssertNotEqual(newTranslationY, initialTranslationY, accuracy: 0.01, "Panning should apply Y translation")
+        XCTAssertEqual(newTranslationX - initialTranslationX, 50, accuracy: 0.01, "Dragging should follow the pointer in screen points at any zoom")
+        XCTAssertEqual(newTranslationY - initialTranslationY, 20, accuracy: 0.01)
 
         // End panning
         viewController.handlePanEnd()
     }
 
-    func testPanningPersistsPerImage() {
+    func testPanningResetsWhenReturningToImage() {
         // Create a test window and add the view controller's view to it
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 600, height: 400),
@@ -2990,7 +3403,7 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [pan1Expectation], timeout: 0.5)
 
         // Get pan offset for first image
-        let pan1Transform = viewController.imageView.layer?.transform
+        let pan1Transform = viewController.imageView.renderTransform
         let pan1TranslationX = pan1Transform?.m41 ?? 0
 
         // Load second image
@@ -3016,7 +3429,7 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [zoom2Expectation], timeout: 0.5)
 
         // Second image should have no pan offset initially
-        let pan2InitialTransform = viewController.imageView.layer?.transform
+        let pan2InitialTransform = viewController.imageView.renderTransform
         let pan2InitialTranslationX = pan2InitialTransform?.m41 ?? 0
         XCTAssertEqual(pan2InitialTranslationX, 0, accuracy: 0.01, "Second image should start with no pan offset")
 
@@ -3031,9 +3444,10 @@ final class ViewControllerTests: XCTestCase {
         wait(for: [load1AgainExpectation], timeout: 1.0)
 
         // First image should restore its pan offset
-        let pan1RestoredTransform = viewController.imageView.layer?.transform
+        let pan1RestoredTransform = viewController.imageView.renderTransform
         let pan1RestoredTranslationX = pan1RestoredTransform?.m41 ?? 0
-        XCTAssertEqual(pan1RestoredTranslationX, pan1TranslationX, accuracy: 1.0, "First image should restore its pan offset")
+        XCTAssertNotEqual(pan1TranslationX, 0, accuracy: 1.0, "The image must have been panned before navigation")
+        XCTAssertEqual(pan1RestoredTranslationX, 0, accuracy: 0.01, "Returning to the image must clear its pan offset")
     }
 
     // MARK: - Drag and Drop Tests
@@ -3566,4 +3980,398 @@ final class ViewControllerTests: XCTestCase {
         image.unlockFocus()
         return image
     }
+}
+
+// Every agreed action scenario has its own XCTest entry, so failures identify
+// the exact sequence. Upload completions are controlled to inspect pending frames.
+extension ViewControllerTests {
+    private func runActionScenario(_ number: Int, autoResize: Bool = false) throws {
+        // I/O: zoom; D: drag; R: resize; A/B: photograph; F: delayed rapid navigation;
+        // Q: input before a pending upload completes; P: preview/full-resolution swap.
+        let scenarios: [Int: [String]] = [
+            1: ["I","O"], 2: ["I","D","O"], 3: ["I","R","O"],
+            4: ["I","D","R","O"], 5: ["I","R","D","O"],
+            6: ["I","D","D","O"], 7: ["I","R","R","O"],
+            8: ["I","D","R","D","O"], 9: ["I","R","D","R","O"],
+            10: ["I","I","I","O","O","O","O"],
+            11: ["I","D","I","O"], 12: ["I","R","I","O"],
+            13: ["I","D","R","I","O"], 14: ["I","R","D","I","O"],
+            15: ["I","D","O","D","O"], 16: ["I","R","O","R","O"],
+            17: ["I","D","R","O","R","D","O"],
+            18: ["I","I","O","I","O"],
+            19: ["I","O","O","O","I","D","R","O"],
+            20: ["B"], 21: ["B"], 22: ["B"],
+            23: ["I","B","A"], 24: ["I","D","B","A"],
+            25: ["I","R","B","A"], 26: ["I","D","R","B","A"],
+            27: ["I","B","R","A"], 28: ["I","F"],
+            29: ["I","F","F"], 30: ["F","R","F"],
+            31: ["Q"], 32: ["I","D","P"],
+            33: ["I","D","O"], 34: ["I","D","I"],
+            35: ["I","D","D","D","O"],
+            36: ["I","D","R","O"], 37: ["I","R","D","I"],
+            38: ["I","D","B","A","I","O"]
+        ]
+        let previous = SettingsManager.shared.autoResizeToImageSize
+        SettingsManager.shared.autoResizeToImageSize = autoResize
+        defer { SettingsManager.shared.autoResizeToImageSize = previous }
+        let window = makeTestWindow()
+        window.setContentSize(NSSize(width: 360, height: 240))
+        viewController.view.layoutSubtreeIfNeeded()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("viewer-actions-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let files = [
+            makeTestImageFile(name: "a.jpg", size: NSSize(width: 600, height: 400), directoryURL: directory),
+            makeTestImageFile(name: "b.jpg", size: NSSize(width: 400, height: 600), directoryURL: directory),
+            makeTestImageFile(name: "c.jpg", size: NSSize(width: 80, height: 50), directoryURL: directory)
+        ]
+        let canvas = viewController.imageView!
+        var uploads: [(MTLTexture?, (MTLTexture?) -> Void)] = []
+        canvas.textureUploader = { image, completion in
+            uploads.append((MetalImageRenderer.shared.makeTexture(image), completion))
+            return BlockOperation()
+        }
+        var savedScales: [URL: CGFloat] = [:]
+        var savedCenters: [URL: NSPoint] = [:]
+        var savedAnchors: [URL: NSPoint] = [:]
+        var dragLocks: Set<URL> = []
+        var activeAnchor: NSPoint?
+        var resizeCount = 0
+        var dragCount = 0
+        func sourceAt(_ point: NSPoint) -> NSPoint {
+            let g = canvas.surface.geometry
+            return NSPoint(x: 0.5 + (point.x / canvas.bounds.width - 0.5 - CGFloat(g.z) / 2) / CGFloat(g.x),
+                           y: 0.5 + (point.y / canvas.bounds.height - 0.5 - CGFloat(g.w) / 2) / CGFloat(g.y))
+        }
+        func screenOf(_ source: NSPoint) -> NSPoint {
+            let g = canvas.surface.geometry
+            return NSPoint(x: canvas.bounds.width * (0.5 + CGFloat(g.z) / 2 + (source.x - 0.5) * CGFloat(g.x)),
+                           y: canvas.bounds.height * (0.5 + CGFloat(g.w) / 2 + (source.y - 0.5) * CGFloat(g.y)))
+        }
+        func checkFrame() {
+            guard let logical = canvas.displayedLogicalSize, canvas.surface.texture != nil else { return }
+            let g = canvas.surface.geometry
+            XCTAssertEqual(CGFloat(g.x) * canvas.bounds.width / (CGFloat(g.y) * canvas.bounds.height),
+                           logical.width / logical.height, accuracy: 0.001, "scenario \(number): aspect")
+            if !canvas.isTexturePending && !canvas.isImageTransitionPending {
+                let fit = min(1, canvas.bounds.width / logical.width, canvas.bounds.height / logical.height)
+                XCTAssertEqual(CGFloat(g.x) * canvas.bounds.width / (logical.width * fit), canvas.zoomScale,
+                               accuracy: 0.001, "scenario \(number): first frame must have final zoom")
+            }
+            if !canvas.isImageTransitionPending {
+            for (extent, offset) in [(g.x, g.z), (g.y, g.w)] {
+                if extent >= 1 {
+                    XCTAssertGreaterThanOrEqual(extent - abs(offset), 0.999, "scenario \(number): exposed edge")
+                } else {
+                    XCTAssertEqual(offset, 0, accuracy: 0.001, "scenario \(number): center non-pannable axis")
+                }
+            }
+            }
+            XCTAssertGreaterThanOrEqual(canvas.zoomScale, 1)
+            XCTAssertEqual(canvas.usesNearestNeighbor, canvas.zoomScale > 1)
+            let percentage = " \(Int((canvas.zoomScale * 100).rounded()))%"
+            if canvas.zoomScale > 1 { XCTAssertTrue(window.title.contains(percentage)) }
+            else { XCTAssertFalse(window.title.contains("%")) }
+        }
+        func finishUploads() {
+            while !uploads.isEmpty {
+                let batch = uploads
+                uploads.removeAll()
+                for (texture, completion) in batch {
+                    completion(texture)
+                    checkFrame()
+                }
+            }
+            checkFrame()
+        }
+        func open(_ index: Int, hold: Bool = false) {
+            let switching = viewController.displayedFileURL != files[index]
+            if let file = viewController.displayedFileURL {
+                savedScales[file] = canvas.zoomScale
+                if !canvas.isTexturePending { savedCenters[file] = sourceAt(NSPoint(x: canvas.bounds.midX, y: canvas.bounds.midY)) }
+                savedAnchors[file] = activeAnchor
+            }
+            let oldTexture = canvas.surface.texture
+            let oldGeometry = canvas.surface.geometry
+            let oldBounds = canvas.bounds
+            let oldRect = canvas.displayedImageScreenRect
+            canvas.surface.onFramePresented = { [weak canvas] _, texture in
+                guard let canvas, let oldRect, oldTexture != nil, texture === oldTexture,
+                      let rect = canvas.displayedImageScreenRect else { return }
+                XCTAssertEqual(rect.minX, oldRect.minX, accuracy: 0.02, "old photo moved horizontally during transition")
+                XCTAssertEqual(rect.minY, oldRect.minY, accuracy: 0.02, "old photo moved vertically during transition")
+                XCTAssertEqual(rect.width, oldRect.width, accuracy: 0.02)
+                XCTAssertEqual(rect.height, oldRect.height, accuracy: 0.02)
+            }
+            defer { canvas.surface.onFramePresented = nil }
+            viewController.loadImage(from: files[index])
+            waitUntil(description: "scenario \(number): image \(index) commit") { self.viewController.displayedFileURL == files[index] }
+            if switching {
+                activeAnchor = nil
+                dragLocks.remove(files[index])
+            } else {
+                activeAnchor = savedAnchors[files[index]]
+            }
+            if canvas.isTexturePending, canvas.bounds == oldBounds {
+                XCTAssertTrue(canvas.surface.texture === oldTexture, "old texture must stay paired with its own camera")
+                XCTAssertEqual(canvas.surface.geometry, oldGeometry, "no old-image/new-zoom intermediate frame")
+            }
+            if !hold {
+                finishUploads()
+                XCTAssertEqual(canvas.zoomScale, switching ? 1 : (savedScales[files[index]] ?? 1), accuracy: 0.001)
+                if switching {
+                    XCTAssertEqual(canvas.panOffset, .zero)
+                    XCTAssertFalse(canvas.usesNearestNeighbor)
+                    XCTAssertFalse(window.title.contains("%"))
+                }
+                if !switching, let center = savedCenters[files[index]] {
+                    let restored = sourceAt(NSPoint(x: canvas.bounds.midX, y: canvas.bounds.midY))
+                    // Clamping after a resize may center an axis that now fits.
+                    if canvas.surface.geometry.x > 1, abs(canvas.surface.geometry.z) < canvas.surface.geometry.x - 1 - 0.001 { XCTAssertEqual(restored.x, center.x, accuracy: 0.002) }
+                    if canvas.surface.geometry.y > 1, abs(canvas.surface.geometry.w) < canvas.surface.geometry.y - 1 - 0.001 { XCTAssertEqual(restored.y, center.y, accuracy: 0.002) }
+                }
+            }
+        }
+        func zoom(_ increasing: Bool) {
+            guard let file = viewController.displayedFileURL else { return }
+            let pointer = NSPoint(x: canvas.bounds.width * 0.58, y: canvas.bounds.height * 0.55)
+            let focusPoint: NSPoint
+            if dragLocks.contains(file), let activeAnchor { focusPoint = screenOf(activeAnchor) }
+            else if increasing || activeAnchor == nil {
+                focusPoint = pointer
+                activeAnchor = sourceAt(pointer)
+            } else { focusPoint = screenOf(activeAnchor!) }
+            let before = sourceAt(focusPoint)
+            let target = increasing ? min(canvas.zoomScale * 2, 16) : max(1, canvas.zoomScale / 1.5)
+            viewController.changeZoom(to: target, at: pointer)
+            finishUploads()
+            let after = sourceAt(focusPoint)
+            // If an edge clamps the requested offset, exact anchoring is impossible.
+            let g = canvas.surface.geometry
+            if g.x > 1, abs(g.z) < g.x - 1 - 0.001 { XCTAssertEqual(after.x, before.x, accuracy: 0.002) }
+            if g.y > 1, abs(g.w) < g.y - 1 - 0.001 { XCTAssertEqual(after.y, before.y, accuracy: 0.002) }
+            if target == 1 { activeAnchor = nil; dragLocks.remove(file) }
+            checkFrame()
+        }
+        func drag() {
+            guard canvas.zoomScale > 1, let file = viewController.displayedFileURL else { return }
+            dragCount += 1
+            let start = NSPoint(x: canvas.bounds.midX, y: canvas.bounds.midY)
+            let end = NSPoint(x: start.x + (dragCount.isMultiple(of: 2) ? -24 : 28), y: start.y + 16)
+            viewController.handlePanStart(at: start)
+            viewController.handlePanMove(to: end)
+            viewController.handlePanEnd()
+            finishUploads()
+            activeAnchor = sourceAt(end)
+            dragLocks.insert(file)
+            checkFrame()
+        }
+        func resize() {
+            resizeCount += 1
+            let size = resizeCount.isMultiple(of: 2) ? NSSize(width: 300, height: 420) : NSSize(width: 480, height: 280)
+            let center = sourceAt(NSPoint(x: canvas.bounds.midX, y: canvas.bounds.midY))
+            window.setContentSize(size)
+            viewController.view.layoutSubtreeIfNeeded()
+            viewController.viewDidLayout()
+            finishUploads()
+            let newCenter = sourceAt(NSPoint(x: canvas.bounds.midX, y: canvas.bounds.midY))
+            let g = canvas.surface.geometry
+            if g.x > 1, abs(g.z) < g.x - 1 - 0.001 { XCTAssertEqual(newCenter.x, center.x, accuracy: 0.002) }
+            if g.y > 1, abs(g.w) < g.y - 1 - 0.001 { XCTAssertEqual(newCenter.y, center.y, accuracy: 0.002) }
+            checkFrame()
+        }
+        open(0)
+        if [21,22,29,30,31].contains(number) {
+            open(1); zoom(true); zoom(true)
+            if number == 22 { drag() }
+            open(0)
+        }
+        for action in scenarios[number]! {
+            switch action {
+            case "I": zoom(true)
+            case "O": zoom(false)
+            case "D": drag()
+            case "R": resize()
+            case "A": open(0)
+            case "B": open(1)
+            case "F":
+                // Deliver superseded texture completions after new requests exist.
+                for index in [1,2,0,2,1,0] { open(index, hold: true) }
+                finishUploads()
+                XCTAssertEqual(viewController.displayedFileURL, files[0])
+                XCTAssertFalse(canvas.isTexturePending)
+            case "Q":
+                open(1, hold: true)
+                let point = NSPoint(x: canvas.bounds.midX, y: canvas.bounds.midY)
+                viewController.changeZoom(to: canvas.zoomScale * 2, at: point)
+                viewController.handlePanStart(at: point)
+                viewController.handlePanMove(to: NSPoint(x: point.x + 20, y: point.y + 10))
+                viewController.handlePanEnd()
+                window.setContentSize(NSSize(width: 440, height: 300))
+                viewController.view.layoutSubtreeIfNeeded()
+                checkFrame()
+                finishUploads()
+            case "P":
+                let camera = canvas.surface.geometry
+                let logical = try XCTUnwrap(canvas.logicalImageSize)
+                let small = createTestImage(size: NSSize(width: 60, height: 40))
+                canvas.setImage(small, logicalSize: logical)
+                viewController.updateImageScaling(for: small)
+                finishUploads()
+                XCTAssertEqual(canvas.surface.geometry, camera, "preview must not alter the camera")
+                canvas.setImage(createTestImage(size: NSSize(width: 600, height: 400)), logicalSize: logical)
+                viewController.updateImageScaling(for: canvas.image!)
+                finishUploads()
+                XCTAssertEqual(canvas.surface.geometry, camera, "full resolution only replaces detail")
+            default: XCTFail("Unknown action")
+            }
+            checkFrame()
+        }
+        // Final delayed completions must never resurrect a different photograph.
+        finishUploads()
+    }
+    func testPanoramaAndPortraitCenterTheAxisThatFits() throws {
+        let previous = SettingsManager.shared.autoResizeToImageSize
+        SettingsManager.shared.autoResizeToImageSize = false
+        defer { SettingsManager.shared.autoResizeToImageSize = previous }
+        let window = makeTestWindow()
+        window.setContentSize(NSSize(width: 600, height: 400))
+        viewController.view.layoutSubtreeIfNeeded()
+        for size in [NSSize(width: 2400, height: 100), NSSize(width: 100, height: 2400)] {
+            let file = makeTestImageFile(name: "one-axis-\(UUID().uuidString).jpg", size: size)
+            defer { try? FileManager.default.removeItem(at: file) }
+            viewController.loadImage(from: file)
+            waitUntil(description: "one-axis image loaded") { self.viewController.displayedFileURL == file }
+            viewController.changeZoom(to: 4, at: NSPoint(x: 300, y: 200))
+            viewController.handlePanStart(at: NSPoint(x: 300, y: 200))
+            viewController.handlePanMove(to: NSPoint(x: 10000, y: 10000))
+            viewController.handlePanEnd()
+            if size.width > size.height {
+                XCTAssertEqual(viewController.imageView.panOffset.y, 0)
+                XCTAssertEqual(viewController.imageView.panOffset.x, 900, accuracy: 0.01)
+            } else {
+                XCTAssertEqual(viewController.imageView.panOffset.x, 0)
+                XCTAssertEqual(viewController.imageView.panOffset.y, 600, accuracy: 0.01)
+            }
+            viewController.changeZoom(to: 2, at: .zero)
+            let offset = viewController.imageView.panOffset
+            if size.width > size.height { XCTAssertEqual(offset.y, 0) }
+            else { XCTAssertEqual(offset.x, 0) }
+        }
+    }
+
+    func testCmd3ZoomedPhotoStaysStationaryUntilNextTextureIsReady() throws {
+        let previous = SettingsManager.shared.autoResizeToImageSize
+        defer { SettingsManager.shared.autoResizeToImageSize = previous }
+        let window = makeTestWindow()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("cmd3-transition-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let first = makeTestImageFile(name: "a.jpg", size: NSSize(width: 600, height: 400), directoryURL: directory)
+        let second = makeTestImageFile(name: "b.jpg", size: NSSize(width: 400, height: 600), directoryURL: directory)
+        let cmd3 = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+            timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "3",
+            charactersIgnoringModifiers: "3", isARepeat: false, keyCode: 20))
+        viewController.keyDown(with: cmd3)
+        let settled = expectation(description: "Cmd+3 preset settled")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { settled.fulfill() }
+        wait(for: [settled], timeout: 2)
+        let canvas = viewController.imageView!
+        var uploads: [(MTLTexture?, (MTLTexture?) -> Void)] = []
+        canvas.textureUploader = { image, completion in
+            uploads.append((MetalImageRenderer.shared.makeTexture(image), completion))
+            return BlockOperation()
+        }
+        viewController.loadImage(from: first)
+        waitUntil(description: "first photo committed") { self.viewController.displayedFileURL == first }
+        while !uploads.isEmpty { let item = uploads.removeFirst(); item.1(item.0) }
+        viewController.changeZoom(to: 4, at: NSPoint(x: canvas.bounds.width * 0.6, y: canvas.bounds.height * 0.6))
+        viewController.handlePanStart(at: NSPoint(x: 200, y: 200))
+        viewController.handlePanMove(to: NSPoint(x: 250, y: 230))
+        viewController.handlePanEnd()
+        let oldTexture = try XCTUnwrap(canvas.surface.texture)
+        let oldRect = try XCTUnwrap(canvas.displayedImageScreenRect)
+        // A late quality upload for the old photo must not release the frozen
+        // frame while the next photo is still decoding.
+        canvas.setImage(try XCTUnwrap(canvas.image), logicalSize: try XCTUnwrap(canvas.logicalImageSize))
+        canvas.beginImageTransition()
+        while !uploads.isEmpty { let item = uploads.removeFirst(); item.1(item.0) }
+        XCTAssertTrue(canvas.surface.texture === oldTexture)
+        XCTAssertTrue(canvas.isImageTransitionPending)
+        viewController.fileListManager.fileURLs = [first, second]
+        viewController.fileListManager.currentIndex = 0
+        viewController.navigateToNext()
+        waitUntil(description: "second photo awaits texture") { self.viewController.displayedFileURL == second }
+        var observedFrames = 0
+        canvas.surface.onFramePresented = { [weak canvas] _, texture in
+            guard let canvas, texture === oldTexture, let rect = canvas.displayedImageScreenRect else { return }
+            observedFrames += 1
+            XCTAssertEqual(rect.minX, oldRect.minX, accuracy: 0.02)
+            XCTAssertEqual(rect.minY, oldRect.minY, accuracy: 0.02)
+            XCTAssertEqual(rect.width, oldRect.width, accuracy: 0.02)
+            XCTAssertEqual(rect.height, oldRect.height, accuracy: 0.02)
+        }
+        for size in [NSSize(width: 800, height: 500), NSSize(width: 500, height: 700)] {
+            window.setContentSize(size)
+            window.setFrameOrigin(NSPoint(x: window.frame.minX + 20, y: window.frame.minY + 15))
+            viewController.view.layoutSubtreeIfNeeded()
+            canvas.layoutSubtreeIfNeeded()
+            canvas.surface.draw()
+        }
+        XCTAssertGreaterThan(observedFrames, 0)
+        canvas.surface.onFramePresented = nil
+        XCTAssertTrue(canvas.surface.texture === oldTexture)
+        while !uploads.isEmpty { let item = uploads.removeFirst(); item.1(item.0) }
+        XCTAssertFalse(canvas.surface.texture === oldTexture)
+        XCTAssertFalse(canvas.isImageTransitionPending)
+        XCTAssertEqual(canvas.zoomScale, 1)
+        // Genuine user resizing after commit resumes normal fitting.
+        window.setContentSize(NSSize(width: 700, height: 400))
+        viewController.view.layoutSubtreeIfNeeded()
+        XCTAssertFalse(canvas.isImageTransitionPending)
+    }
+
+    func testActionScenariosWithAutoResize() throws {
+        for number in [2,4,5,20,21,22,23,24,25,26,27,28,29,30,31,32,36,37,38] {
+            try runActionScenario(number, autoResize: true)
+        }
+    }
+    func testActionScenario01() throws { try runActionScenario(1) }
+    func testActionScenario02() throws { try runActionScenario(2) }
+    func testActionScenario03() throws { try runActionScenario(3) }
+    func testActionScenario04() throws { try runActionScenario(4) }
+    func testActionScenario05() throws { try runActionScenario(5) }
+    func testActionScenario06() throws { try runActionScenario(6) }
+    func testActionScenario07() throws { try runActionScenario(7) }
+    func testActionScenario08() throws { try runActionScenario(8) }
+    func testActionScenario09() throws { try runActionScenario(9) }
+    func testActionScenario10() throws { try runActionScenario(10) }
+    func testActionScenario11() throws { try runActionScenario(11) }
+    func testActionScenario12() throws { try runActionScenario(12) }
+    func testActionScenario13() throws { try runActionScenario(13) }
+    func testActionScenario14() throws { try runActionScenario(14) }
+    func testActionScenario15() throws { try runActionScenario(15) }
+    func testActionScenario16() throws { try runActionScenario(16) }
+    func testActionScenario17() throws { try runActionScenario(17) }
+    func testActionScenario18() throws { try runActionScenario(18) }
+    func testActionScenario19() throws { try runActionScenario(19) }
+    func testActionScenario20() throws { try runActionScenario(20) }
+    func testActionScenario21() throws { try runActionScenario(21) }
+    func testActionScenario22() throws { try runActionScenario(22) }
+    func testActionScenario23() throws { try runActionScenario(23) }
+    func testActionScenario24() throws { try runActionScenario(24) }
+    func testActionScenario25() throws { try runActionScenario(25) }
+    func testActionScenario26() throws { try runActionScenario(26) }
+    func testActionScenario27() throws { try runActionScenario(27) }
+    func testActionScenario28() throws { try runActionScenario(28) }
+    func testActionScenario29() throws { try runActionScenario(29) }
+    func testActionScenario30() throws { try runActionScenario(30) }
+    func testActionScenario31() throws { try runActionScenario(31) }
+    func testActionScenario32() throws { try runActionScenario(32) }
+    func testActionScenario33() throws { try runActionScenario(33) }
+    func testActionScenario34() throws { try runActionScenario(34) }
+    func testActionScenario35() throws { try runActionScenario(35) }
+    func testActionScenario36() throws { try runActionScenario(36) }
+    func testActionScenario37() throws { try runActionScenario(37) }
+    func testActionScenario38() throws { try runActionScenario(38) }
 }

@@ -55,6 +55,11 @@ enum WindowResizeAnchor: String, CaseIterable {
     }
 }
 
+/// Manual window size selected with Cmd+1, Cmd+2, or Cmd+3.
+enum WindowSizePreset: String, CaseIterable {
+    case small, medium, large
+}
+
 /// Manages application settings and preferences
 class SettingsManager {
     
@@ -90,6 +95,14 @@ class SettingsManager {
 
     /// UserDefaults key for the anchor used while auto-resizing the window
     private let windowResizeAnchorKey = "WindowResizeAnchor"
+    private let windowSizePresetKey = "WindowSizePreset"
+
+    var windowSizePreset: WindowSizePreset {
+        get {
+            WindowSizePreset(rawValue: UserDefaults.standard.string(forKey: windowSizePresetKey) ?? "") ?? .small
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: windowSizePresetKey) }
+    }
     
     /// UserDefaults key for file name display location preference
     private let fileNameDisplayLocationKey = "FileNameDisplayLocation"

@@ -23,6 +23,72 @@ final class AppDelegateTests: XCTestCase {
         super.tearDown()
     }
     
+    func testWindowSizePresetsSurviveCloseAndNewAppInstance() throws {
+        let settings = SettingsManager.shared
+        let oldAuto = settings.autoResizeToImageSize
+        let oldPreset = UserDefaults.standard.object(forKey: "WindowSizePreset")
+        defer {
+            settings.autoResizeToImageSize = oldAuto
+            if let oldPreset { UserDefaults.standard.set(oldPreset, forKey: "WindowSizePreset") }
+            else { UserDefaults.standard.removeObject(forKey: "WindowSizePreset") }
+        }
+        for (key, preset) in [("1", WindowSizePreset.small), ("2", .medium), ("3", .large)] {
+            settings.autoResizeToImageSize = true
+            let first = AppDelegate()
+            first.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+            let firstWindow = try XCTUnwrap(first.window)
+            let controller = try XCTUnwrap(firstWindow.contentViewController as? ViewController)
+            let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+                timestamp: 0, windowNumber: firstWindow.windowNumber, context: nil, characters: key,
+                charactersIgnoringModifiers: key, isARepeat: false, keyCode: 0))
+            controller.keyDown(with: event)
+            XCTAssertFalse(settings.autoResizeToImageSize)
+            XCTAssertEqual(settings.windowSizePreset, preset)
+            XCTAssertEqual(UserDefaults.standard.string(forKey: "WindowSizePreset"), preset.rawValue)
+            first.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: firstWindow))
+            XCTAssertEqual(settings.windowSizePreset, preset, "Closing must not overwrite the selected preset with Cmd+1")
+            firstWindow.orderOut(nil)
+            let reopened = AppDelegate()
+            reopened.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+            let reopenedWindow = try XCTUnwrap(reopened.window)
+            let content = reopenedWindow.contentRect(forFrameRect: reopenedWindow.frame).size
+            switch preset {
+            case .small:
+                XCTAssertEqual(reopenedWindow.frame.width, 600, accuracy: 1)
+                XCTAssertEqual(reopenedWindow.frame.height, 400, accuracy: 1)
+            case .medium:
+                XCTAssertEqual(reopenedWindow.frame.width, 900, accuracy: 1)
+                XCTAssertEqual(reopenedWindow.frame.height, 600, accuracy: 1)
+            case .large:
+                let screen = try XCTUnwrap(reopenedWindow.screen ?? NSScreen.main)
+                XCTAssertEqual(reopenedWindow.frame.width, screen.visibleFrame.width - 80, accuracy: 1)
+                XCTAssertEqual(reopenedWindow.frame.height, screen.visibleFrame.height - 80, accuracy: 1)
+            }
+            XCTAssertGreaterThan(content.width, 0)
+            reopenedWindow.orderOut(nil)
+        }
+    }
+
+    func testImageFitModeDoesNotOverwriteLastManualWindowPreset() throws {
+        let settings = SettingsManager.shared
+        let previousAuto = settings.autoResizeToImageSize
+        let previousPreset = settings.windowSizePreset
+        defer {
+            settings.autoResizeToImageSize = previousAuto
+            settings.windowSizePreset = previousPreset
+        }
+        settings.windowSizePreset = .large
+        settings.autoResizeToImageSize = true
+        let fresh = AppDelegate()
+        fresh.applicationDidFinishLaunching(Notification(name: NSApplication.didFinishLaunchingNotification))
+        let window = try XCTUnwrap(fresh.window)
+        XCTAssertEqual(window.frame.width, 600, accuracy: 1)
+        XCTAssertEqual(settings.windowSizePreset, .large)
+        fresh.windowWillClose(Notification(name: NSWindow.willCloseNotification, object: window))
+        XCTAssertEqual(settings.windowSizePreset, .large)
+        window.orderOut(nil)
+    }
+
     func testIsDarkModeActive() {
         // Test that dark mode detection works
         // This will return the actual current system appearance
