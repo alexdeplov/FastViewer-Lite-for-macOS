@@ -3,17 +3,20 @@
 
 # FastViewer Lite
 
-FastViewer Lite is a lightweight native image viewer for macOS. It opens common image formats quickly and supports drag-and-drop, folder navigation, zooming and panning, image metadata, transparency previews, and common file actions.
+Browse images with the arrow keys.
 
-## Requirements
+If you’ve switched from Windows, Linux or FreeBSD, you may miss being able to open a photo and move through the rest of the folder. Preview on macOS can make that harder than it needs to be.
 
-- macOS 12.0 (Monterey) or later
-- Xcode with Swift 5 support
+FastViewer Lite lets you open an image and browse the folder with the left and right arrow keys. It’s a quick, simple viewer that keeps the focus on your images.
 
-## Build and test
+Open a picture and start browsing.
 
-Open `FastViewerLite.xcodeproj` in Xcode, select the **FastViewer Lite** scheme, and choose **Run**. The test suite is available through **Product > Test**.
+### Why FastViewer Lite?
 
-## License
-
-FastViewer Lite is released under the BSD 2-Clause License. See [LICENSE](LICENSE) for the full text.
+- Browse a folder with the arrow keys.
+- Move between images with ← and →. You don’t need to select multiple files in Finder first.
+- Quick to open, light on features you don’t need.
+- A minimal native macOS viewer for opening images quickly, without a full photo editor.
+- A native macOS app inspired by feh’s simplicity on FreeBSD.
+- Free and open source
+- Released under the BSD 2-Clause License.
