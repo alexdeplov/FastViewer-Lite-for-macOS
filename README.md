@@ -23,4 +23,4 @@ Open a picture and start browsing.
 
 ### Download
 
-[Download FastViewer Lite 3.4](./Build/FastViewer%20Lite%203.4.zip) (macOS 14 Sonoma or later).
+[Download FastViewer Lite 3.4](https://github.com/alexdeplov/FastViewer-Lite-for-macOS/raw/refs/heads/main/Build/FastViewer%20Lite%203.4.zip) (macOS 14 Sonoma or later).
