@@ -20,3 +20,7 @@ Open a picture and start browsing.
 - A native macOS app inspired by feh’s simplicity on FreeBSD.
 - Free and open source
 - Released under the BSD 2-Clause License.
+
+### Download
+
+[Download FastViewer Lite 3.4](./Build/FastViewer%20Lite%203.4.zip) (macOS 14 Sonoma or later).
